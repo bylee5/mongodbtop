@@ -198,14 +198,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     mode = args.mode or cfg.mode or Mode.QUERIES
 
-    # 첫 번째 서버에 접속할 수 없으면 명확한 메시지와 함께 바로 종료한다.
-    try:
-        collectors[0].server_status()
-    except PyMongoError as e:
-        print(f"error: {friendly_error(names[0], e)}", file=sys.stderr)
-        for c in collectors:
-            c.client.close()
-        return 1
+    # 서버가 하나뿐이면 접속할 수 없을 때 명확한 메시지와 함께 바로 종료한다.
+    # 여러 대일 때는 죽은 서버가 있어도 시작하고, 화면에 DOWN으로 표시한 뒤 계속 재시도한다.
+    if len(collectors) == 1 or args.batch:
+        try:
+            collectors[0].server_status()
+        except PyMongoError as e:
+            print(f"error: {friendly_error(names[0], e)}", file=sys.stderr)
+            for c in collectors:
+                c.client.close()
+            return 1
 
     try:
         if args.batch:

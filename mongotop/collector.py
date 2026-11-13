@@ -357,56 +357,105 @@ class InfoMsg:
 Message = Union[SnapshotMsg, ErrorMsg, InfoMsg]
 
 
-class Worker(threading.Thread):
-    """백그라운드 루프: 현재 서버/모드의 데이터를 가져온 뒤, 갱신 주기·설정 변경·
-    명령(kill / 새로고침) 중 하나가 올 때까지 기다린다. 수집이 별도 스레드에서
-    돌기 때문에 느린 서버에서도 키 입력이 막히지 않는다."""
+BACKGROUND_INTERVAL = 5.0  # 화면에 띄우지 않은 서버의 최소 수집 주기
+MAX_BACKOFF = 30.0  # 실패가 이어질 때 재시도 간격의 상한
 
-    def __init__(self, collectors: List[Collector], settings: Settings, out: "queue.Queue[Message]"):
-        super().__init__(name="mongotop-collector", daemon=True)
-        self._collectors = collectors
-        self._settings = settings
+
+def plan(s: Settings, index: int, failures: int) -> Tuple[Mode, float]:
+    """서버 `index`가 이번에 수집할 모드와 다음 수집까지 기다릴 시간.
+
+    - 화면에 띄운 서버: 현재 모드 전체 수집, 갱신 주기마다
+    - 그 밖의 서버: serverStatus만 (S 모드 이력용), 최소 5초마다
+    실패가 이어지면 화면에 띄운 서버가 아닌 한 간격을 두 배씩 늘린다 (최대 30초)."""
+    if index == s.server:
+        return s.mode, s.interval
+    mode, wait = Mode.STATUS, max(s.interval, BACKGROUND_INTERVAL)
+    if failures:
+        wait = min(MAX_BACKOFF, max(wait, wait * 2 ** min(failures - 1, 5)))
+    return mode, wait
+
+
+class _ServerWorker(threading.Thread):
+    """서버 하나를 맡는 수집 스레드. 서버가 응답하지 않아도 다른 서버에는 영향이 없다.
+    연결이 끊기면 드라이버가 다음 수집 때 다시 접속한다."""
+
+    def __init__(self, index: int, collector: Collector, pool: "Worker", out: "queue.Queue[Message]"):
+        super().__init__(name=f"mongotop-collector-{index}", daemon=True)
+        self.index = index
+        self._collector = collector
+        self._pool = pool
         self._out = out
-        self._lock = threading.Lock()
-        self._wake = threading.Event()
-        self._commands: "queue.Queue[Command]" = queue.Queue()
-        self._stopped = threading.Event()
-
-    def update_settings(self, s: Settings) -> None:
-        with self._lock:
-            self._settings = s
-        self._wake.set()
-
-    def send(self, cmd: Command) -> None:
-        self._commands.put(cmd)
-        self._wake.set()
-
-    def stop(self) -> None:
-        self._stopped.set()
-        self._wake.set()
+        self.wake = threading.Event()
+        self.commands: "queue.Queue[Command]" = queue.Queue()
 
     def run(self) -> None:
-        while not self._stopped.is_set():
-            with self._lock:
-                s = self._settings
+        failures = 0
+        while not self._pool.stopped.is_set():
+            s = self._pool.settings()
+            mode, wait = plan(s, self.index, failures)
             if not s.paused:
                 try:
-                    snap = self._collectors[s.server].collect(s.mode, s.show_idle)
-                    self._out.put(SnapshotMsg(s.server, snap))
+                    snap = self._collector.collect(mode, s.show_idle)
+                    self._out.put(SnapshotMsg(self.index, snap))
+                    failures = 0
                 except CollectError as e:
-                    self._out.put(ErrorMsg(s.server, str(e)))
+                    failures += 1
+                    self._out.put(ErrorMsg(self.index, str(e)))
                 except Exception as e:  # 예기치 못한 오류에도 스레드는 살아 있어야 한다
-                    self._out.put(ErrorMsg(s.server, f"{type(e).__name__}: {e}"))
-            self._wake.wait(s.interval)
-            self._wake.clear()
+                    failures += 1
+                    self._out.put(ErrorMsg(self.index, f"{type(e).__name__}: {e}"))
+                _, wait = plan(s, self.index, failures)
+            self.wake.wait(wait)
+            self.wake.clear()
             while True:
                 try:
-                    cmd = self._commands.get_nowait()
+                    cmd = self.commands.get_nowait()
                 except queue.Empty:
                     break
                 if isinstance(cmd, Kill):
                     try:
-                        text = self._collectors[cmd.server].kill(cmd.target)
+                        text = self._collector.kill(cmd.target)
                     except Exception as e:
                         text = f"kill failed: {short_err(e)}"
                     self._out.put(InfoMsg(text))
+                else:  # Refresh: 깨어난 것만으로 충분하다
+                    failures = 0
+
+
+class Worker:
+    """서버마다 수집 스레드를 하나씩 돌린다. 수집이 별도 스레드에서 돌기 때문에
+    느린 서버나 죽은 서버가 있어도 키 입력과 다른 서버의 갱신이 막히지 않는다."""
+
+    def __init__(self, collectors: List[Collector], settings: Settings, out: "queue.Queue[Message]"):
+        self._settings = settings
+        self._lock = threading.Lock()
+        self.stopped = threading.Event()
+        self._threads = [_ServerWorker(i, c, self, out) for i, c in enumerate(collectors)]
+
+    def start(self) -> None:
+        for t in self._threads:
+            t.start()
+
+    def settings(self) -> Settings:
+        with self._lock:
+            return self._settings
+
+    def update_settings(self, s: Settings) -> None:
+        with self._lock:
+            self._settings = s
+        for t in self._threads:
+            t.wake.set()
+
+    def send(self, cmd: Command) -> None:
+        if isinstance(cmd, Kill):
+            targets = [self._threads[cmd.server]]
+        else:
+            targets = [self._threads[self.settings().server]]
+        for t in targets:
+            t.commands.put(cmd)
+            t.wake.set()
+
+    def stop(self) -> None:
+        self.stopped.set()
+        for t in self._threads:
+            t.wake.set()

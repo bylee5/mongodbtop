@@ -1,9 +1,9 @@
-"""설정 파일, 접속 대상·비밀번호 결정, 멤버 URI 테스트."""
+"""설정 파일, 접속 대상·비밀번호 결정, 멤버 URI, 수집 계획 테스트."""
 
 import pytest
 
 from mongotop import config
-from mongotop.collector import member_uri
+from mongotop.collector import Settings, member_uri, plan
 from mongotop.config import CliAuth, ConfigError, PasswordSource
 from mongotop.model import Mode
 
@@ -135,3 +135,12 @@ def test_member_uri():
     assert member_uri("mongodb+srv://c.example.net/?retryWrites=true", "n1:27017", {"tls": "true"}) \
         == "mongodb://n1:27017/?retryWrites=true&tls=true"
     assert member_uri("mongodb://h?tls=false", "n:1", {"tls": "true"}) == "mongodb://n:1/?tls=false"
+
+
+def test_collection_plan():
+    s = Settings(server=0, mode=Mode.QUERIES, interval=1.0, paused=False, show_idle=False)
+    assert plan(s, 0, 0) == (Mode.QUERIES, 1.0)
+    assert plan(s, 0, 3) == (Mode.QUERIES, 1.0), "focused server is never backed off"
+    assert plan(s, 1, 0) == (Mode.STATUS, 5.0), "other servers: serverStatus only, slower"
+    assert plan(s, 1, 2) == (Mode.STATUS, 10.0)
+    assert plan(s, 1, 9) == (Mode.STATUS, 30.0)

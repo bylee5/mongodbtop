@@ -132,6 +132,17 @@ mongotop은 innotop처럼 *노드 하나*를 봅니다. 레플리카셋 URI를 �
 인증 정보와 URI 옵션(TLS 등)은 그대로 이어받고, `mongodb+srv://`는 `tls=true`와 TXT의 `authSource`를 붙입니다.
 멤버 목록은 시작할 때 한 번 가져옵니다. 시작할 때 멤버를 찾지 못하면 경고를 내고 시드 연결만 씁니다.
 
+### 수집 방식과 장애 격리
+
+- 서버마다 수집 스레드가 따로 돕니다. 서버 하나가 느리거나 죽어도 다른 서버와 키 입력은 영향을 받지 않습니다.
+- **화면에 띄운 서버**만 현재 모드의 무거운 수집(`$currentOp`, `top`, `dbStats` 등)을 합니다.
+  나머지 서버는 `serverStatus`만 5초(또는 갱신 주기 중 긴 쪽)마다 가져와 S 모드 이력을 이어갑니다.
+- 실패한 서버는 오류를 표시하고 계속 재시도합니다. 화면에 띄운 서버가 아니면 간격을 두 배씩 늘립니다(최대 30초).
+- 서버가 하나일 때만 시작 시 접속에 실패하면 바로 종료합니다. 여러 대면 죽은 서버가 있어도 시작합니다.
+
+**단일 호스트 URI**(`replicaSet` 없음)는 자동으로 `directConnection=true`로 접속합니다. innotop처럼 *지정한 그 노드*를
+모니터링하기 위해서입니다(세컨더리를 지정해도 프라이머리로 라우팅되지 않음). 이를 끄려면 `--no-direct`.
+
 ### 필요 권한
 
 `clusterMonitor` 역할이면 충분합니다(`serverStatus`, `$currentOp` allUsers, `replSetGetStatus`, `top`, `dbStats`).
@@ -184,7 +195,7 @@ docker exec mongo-test mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,ho
 mongotop/
   cli.py        CLI(argparse), 접속 오류 안내, batch 모드
   config.py     설정 파일(~/.mongotop.ini), 서버·그룹 이름 해석, 비밀번호 찾기
-  collector.py  MongoDB 접속·수집, 레플리카셋 멤버 펼치기, kill, 백그라운드 수집 스레드
+  collector.py  MongoDB 접속·수집, 레플리카셋 멤버 펼치기, kill, 서버별 수집 스레드
   model.py      모드 정의, $currentOp / replSetGetStatus / top / dbStats 파싱
   metrics.py    serverStatus 게이지와 초당 변화율 계산
   app.py        앱 상태, 서버별 상태/이력, 키 처리 (터미널 I/O 없음)
@@ -194,7 +205,7 @@ mongotop/
 tests/          pytest 테스트
 ```
 
-수집은 별도 스레드에서 돌고 UI는 큐로 스냅샷을 받으므로, 느린 서버에서도 키 입력이 막히지 않습니다.
+수집은 서버마다 별도 스레드에서 돌고 UI는 큐로 스냅샷을 받으므로, 느린 서버에서도 키 입력이 막히지 않습니다.
 서버별 상태(S 모드 이력 포함)는 서버를 전환해도 유지됩니다. 화면은 먼저 문자 버퍼에 그린 뒤 curses로 출력하므로
 렌더링을 터미널 없이 테스트할 수 있습니다.
 
