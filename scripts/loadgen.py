@@ -42,7 +42,8 @@ def reader(coll, stop: threading.Event) -> None:
 
 
 def slow_query(coll, stop: threading.Event, secs: int) -> None:
-    """서버에서 `secs`초 동안 도는 쿼리를 반복한다 (COLLSCAN, 오래 실행)."""
+    """서버에서 `secs`초 동안 도는 쿼리를 반복한다 (COLLSCAN, 오래 실행).
+    `$where`는 문서마다 실행되므로 문서가 하나뿐인 컬렉션에 건다."""
     while not stop.is_set():
         try:
             coll.find_one({"$where": f"sleep({secs * 1000}); return false"})
@@ -72,14 +73,18 @@ def main() -> None:
     client = MongoClient(a.uri, appname=APP)
     coll = client.shop.orders
     coll.insert_one({"status": "A", "qty": 1, "seq": -1})
+    slow = client.shop.slow
+    if slow.count_documents({}) != 1:
+        slow.delete_many({})
+        slow.insert_one({"x": 1})
     stop = threading.Event()
     jobs = [
         (writer, (coll, stop)),
         (reader, (coll, stop)),
         (reader, (coll, stop)),
-        (slow_query, (coll, stop, 3)),
-        (slow_query, (coll, stop, 7)),
-        (slow_query, (coll, stop, 30)),
+        (slow_query, (slow, stop, 3)),
+        (slow_query, (slow, stop, 7)),
+        (slow_query, (slow, stop, 30)),
         (idle_txn, (client, coll, stop)),
     ]
     for fn, args in jobs:
