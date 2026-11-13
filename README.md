@@ -29,6 +29,7 @@ Opid         Time▼ Op        Namespace                Client                Ap
 | `R` | 레플리카셋 멤버, 지연(lag), oplog window | `replSetGetStatus`, `local.oplog.rs` | Replication Status |
 | `O` | 컬렉션별 부하 (시간 점유율, ops/s) | `top` | Open Tables |
 | `D` | 데이터베이스별 크기 | `listDatabases` + `dbStats` (10초 캐시) | — |
+| `A` | 전체 서버 요약 — 서버마다 한 줄 (역할, ops/s, 지연, 캐시, 복제 lag, DOWN) | 모든 서버의 `serverStatus` + `replSetGetStatus` | — |
 
 상단 헤더는 모든 모드에서 공통으로 표시됩니다: 호스트/버전/역할, ops/s (insert·query·update·delete·getmore·command),
 복제 ops, 네트워크, 평균 지연(opLatencies), 글로벌 락 큐, 캐시 사용률/dirty 비율, 트랜잭션, 문서/스캔 처리량, assert 등.
@@ -38,9 +39,9 @@ Opid         Time▼ Op        Namespace                Client                Ap
 
 | 키 | 동작 |
 |---|---|
-| `Q T L C S B R O D` | 모드 전환 (같은 키를 다시 누르면 즉시 새로고침) |
+| `Q T L C S B R O D A` | 모드 전환 (같은 키를 다시 누르면 즉시 새로고침) |
 | `↑ ↓ PgUp PgDn Home End` | 행 선택 |
-| `Enter` / `e` | 선택 행의 원본 문서(JSON) 보기 |
+| `Enter` / `e` | 선택 행의 원본 문서(JSON) 보기. **A 모드에서 `Enter`는 그 서버로 들어간다** (`e`는 serverStatus 보기) |
 | `k` / `x` | 선택한 작업 kill (`killOp`). **T 모드에서는 `killSessions`로 트랜잭션 중단.** `y`로 확인 |
 | `f` 또는 `/` | 부분 문자열 필터, `c` 필터 해제 |
 | `<` `>` (`←` `→`) | 정렬 컬럼 변경, `r` 정렬 방향 반전 |
@@ -48,6 +49,7 @@ Opid         Time▼ Op        Namespace                Client                Ap
 | `s` | 갱신 주기 변경, `space` 즉시 갱신 |
 | `p` | 일시정지 / 재개 |
 | `n` / `N` / `Tab` | 다음 / 이전 서버 |
+| `w` | 서버 선택 팝업 (글자를 입력해 이름·호스트로 거르고 `Enter`) |
 | `?` | 도움말, `q` / `Ctrl-C` 종료 |
 
 innotop이 Sleep 스레드를 기본으로 숨기듯, Q 모드는 드라이버의 대기형 `hello`(maxAwaitTimeMS), 클라이언트가 없는 내부 스레드
@@ -60,7 +62,7 @@ innotop이 Sleep 스레드를 기본으로 숨기듯, Q 모드는 드라이버�
 ```sh
 mongotop                                           # 설정의 default, 없으면 mongodb://localhost:27017
 mongotop prod-rs                                   # 설정 파일에 등록한 서버 이름
-mongotop -g prod                                   # 그룹 전체, n 으로 전환
+mongotop -g prod                                   # 그룹 전체 (A 모드로 시작)
 mongotop prod-rs stage mongodb://db7:27017         # 이름과 URI를 섞어서
 mongotop mongodb://db1:27017/?replicaSet=rs0 --expand   # 레플리카셋 멤버마다 따로
 mongotop --list                                    # 등록된 서버 목록
@@ -71,10 +73,11 @@ MONGODB_URI=mongodb+srv://... mongotop             # 환경변수
 # 비대화형(batch) 모드: TSV 출력. 스크립트/로그 수집용
 mongotop -b -m S -c 10 -i 1     # vmstat 처럼 1초마다 한 줄, 10회
 mongotop -b -m Q                # 현재 실행 중인 작업 1회 덤프
-mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복 (batch는 첫 서버만)
+mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복
+mongotop -b -m A -g prod -c 0 -i 10   # 그룹 전체를 10초마다 서버당 한 줄 (A 외 모드는 첫 서버만)
 ```
 
-옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드,
+옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드(서버가 여럿이면 기본 A),
 `--idle` idle 표시로 시작, `-g/--group`, `--config`, `--list`, `--expand`,
 `-b/--batch`, `-c/--count`(0 = 무한), `--no-direct`.
 
@@ -136,8 +139,9 @@ mongotop은 innotop처럼 *노드 하나*를 봅니다. 레플리카셋 URI를 �
 
 - 서버마다 수집 스레드가 따로 돕니다. 서버 하나가 느리거나 죽어도 다른 서버와 키 입력은 영향을 받지 않습니다.
 - **화면에 띄운 서버**만 현재 모드의 무거운 수집(`$currentOp`, `top`, `dbStats` 등)을 합니다.
-  나머지 서버는 `serverStatus`만 5초(또는 갱신 주기 중 긴 쪽)마다 가져와 S 모드 이력을 이어갑니다.
-- 실패한 서버는 오류를 표시하고 계속 재시도합니다. 화면에 띄운 서버가 아니면 간격을 두 배씩 늘립니다(최대 30초).
+  나머지 서버는 `serverStatus`만 5초(또는 갱신 주기 중 긴 쪽)마다 가져와 S 모드 이력과 A 모드 요약을 이어갑니다.
+  A 모드에서는 모든 서버가 갱신 주기마다 `serverStatus` + `replSetGetStatus`를 수집합니다.
+- 실패한 서버는 화면에 빨간 `DOWN`으로 표시하고 계속 재시도합니다. 화면에 띄운 서버가 아니면 간격을 두 배씩 늘립니다(최대 30초).
 - 서버가 하나일 때만 시작 시 접속에 실패하면 바로 종료합니다. 여러 대면 죽은 서버가 있어도 시작합니다.
 
 **단일 호스트 URI**(`replicaSet` 없음)는 자동으로 `directConnection=true`로 접속합니다. innotop처럼 *지정한 그 노드*를

@@ -24,6 +24,7 @@ class Mode(Enum):
     REPLICATION = "R"  # 레플리카셋 멤버와 지연 — "Replication Status"
     TOP = "O"  # `top` 기반 컬렉션별 활동 — "Open Tables"
     DATABASES = "D"  # `dbStats` 기반 데이터베이스 크기
+    OVERVIEW = "A"  # 모든 서버를 한 줄씩 요약
 
     @property
     def key(self) -> str:
@@ -59,6 +60,7 @@ _TITLES = {
     Mode.REPLICATION: "Replication Status",
     Mode.TOP: "Collection Activity (top)",
     Mode.DATABASES: "Database Sizes",
+    Mode.OVERVIEW: "All Servers",
 }
 
 

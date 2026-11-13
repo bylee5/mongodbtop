@@ -6,6 +6,7 @@ import argparse
 import datetime as _dt
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Tuple
 
 from pymongo import MongoClient
@@ -18,7 +19,8 @@ from .model import Mode
 
 EPILOG = """\
 MODES: Q queries, T transactions, L lock waits, C commands, S status over time,
-       B WiredTiger cache, R replication, O collection activity (top), D database sizes
+       B WiredTiger cache, R replication, O collection activity (top), D database sizes,
+       A all servers (one summary row per server)
 
 SERVERS: a target is a URI, or a server / group name from the config file
   (~/.mongotop.ini, or --config / MONGOTOP_CONFIG). See --list.
@@ -31,14 +33,15 @@ EXAMPLES:
   mongotop prod-rs                                      (name from the config file)
   mongotop -g prod                                      (every server in group prod)
   mongotop mongodb://db1:27017/?replicaSet=rs0 --expand (one entry per member)
-  mongotop mongodb://db1:27017 mongodb://db2:27017      (press n to switch)
+  mongotop mongodb://db1:27017 mongodb://db2:27017      (press n / w to switch)
   mongotop -b -m S -c 10 -i 1                           (vmstat-like batch output)
+  mongotop -b -m A -g prod -c 0 -i 10                   (all servers, every 10s)
 """
 
 
 def _mode(s: str) -> Mode:
     if len(s) != 1:
-        raise argparse.ArgumentTypeError("mode is a single letter: Q T L C S B R O D")
+        raise argparse.ArgumentTypeError("mode is a single letter: Q T L C S B R O D A")
     m = Mode.from_key(s)
     if m is None:
         raise argparse.ArgumentTypeError(f"unknown mode '{s}'")
@@ -64,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list", action="store_true", help="list servers from the config file and exit")
     p.add_argument("--expand", action="store_true", help="monitor every replica set member separately")
     p.add_argument("-i", "--interval", type=float, help="refresh interval in seconds (default 2)")
-    p.add_argument("-m", "--mode", type=_mode, help="start mode: Q T L C S B R O D (default Q)")
+    p.add_argument("-m", "--mode", type=_mode, help="start mode: Q T L C S B R O D A (default Q; A for several servers)")
     p.add_argument("-u", "--username", help="user name (overrides the URI / config)")
     p.add_argument("-p", "--password", help="password (overrides everything else)")
     p.add_argument("--auth-db", help="authentication database")
@@ -161,6 +164,43 @@ def run_batch(collector: Collector, name: str, mode: Mode, interval: float, coun
         time.sleep(interval)
 
 
+def run_batch_overview(collectors: List[Collector], names: List[str], interval: float, count: int) -> None:
+    """A 모드 batch: 모든 서버를 동시에 수집해 서버마다 한 줄씩 출력한다.
+    응답하지 않는 서버는 Status 컬럼에 DOWN으로 나온다."""
+    app = App(names, Mode.OVERVIEW, interval, False)
+    out = sys.stdout
+
+    def sample(pool: ThreadPoolExecutor) -> None:
+        def one(c: Collector):
+            try:
+                return c.collect(Mode.OVERVIEW)
+            except CollectError as e:
+                return e
+
+        for st, res in zip(app.servers, pool.map(one, collectors)):
+            if isinstance(res, CollectError):
+                st.error = str(res)
+            else:
+                st.apply(res)
+
+    with ThreadPoolExecutor(max_workers=min(32, len(collectors))) as pool:
+        sample(pool)  # 초당 값의 기준 샘플
+        time.sleep(interval)
+        i = 0
+        while True:
+            sample(pool)
+            table = app.table()
+            if i > 0:
+                out.write("\n")
+            out.write(f"# {_dt.datetime.now():%Y-%m-%d %H:%M:%S} — {views.overview_header(app.servers)[0]}\n")
+            out.write(views.to_tsv(table, True))
+            out.flush()
+            i += 1
+            if count and i >= count:
+                return
+            time.sleep(interval)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -196,11 +236,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     names = [n for n, _ in opened]
     collectors = [Collector(c) for _, c in opened]
 
-    mode = args.mode or cfg.mode or Mode.QUERIES
+    mode = args.mode or cfg.mode or (Mode.OVERVIEW if len(collectors) > 1 else Mode.QUERIES)
 
     # 서버가 하나뿐이면 접속할 수 없을 때 명확한 메시지와 함께 바로 종료한다.
     # 여러 대일 때는 죽은 서버가 있어도 시작하고, 화면에 DOWN으로 표시한 뒤 계속 재시도한다.
-    if len(collectors) == 1 or args.batch:
+    if len(collectors) == 1 or (args.batch and mode is not Mode.OVERVIEW):
         try:
             collectors[0].server_status()
         except PyMongoError as e:
@@ -219,9 +259,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
             except (AttributeError, ValueError):
                 pass
-            if len(collectors) > 1:
-                print(f"note: batch mode shows the first server only ({names[0]})", file=sys.stderr)
-            run_batch(collectors[0], names[0], mode, interval, args.count, idle)
+            if mode is Mode.OVERVIEW:
+                run_batch_overview(collectors, names, interval, args.count)
+            else:
+                if len(collectors) > 1:
+                    print(f"note: batch mode {mode.key} shows the first server only ({names[0]}); "
+                          "use -m A for all servers", file=sys.stderr)
+                run_batch(collectors[0], names[0], mode, interval, args.count, idle)
         else:
             from .ui import run_tui  # curses는 TUI에서만 필요하다
 

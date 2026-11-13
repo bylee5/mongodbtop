@@ -107,7 +107,7 @@ def test_expand_members(collector):
     try:
         assert members and all(label.startswith("rs/") for label, _ in members)
         for _, client in members:
-            snap = Collector(client).collect(Mode.REPLICATION)
+            snap = Collector(client).collect(Mode.OVERVIEW)
             assert snap.repl is not None and not snap.repl.error
             assert any(m.is_self for m in snap.repl.members)
     finally:

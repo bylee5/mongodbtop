@@ -106,6 +106,14 @@ class Detail:
     scroll: int = 0
 
 
+@dataclass
+class Picker:
+    """서버 선택 팝업: 입력한 글자로 거르고 ↑↓로 고른다."""
+
+    query: str = ""
+    sel: int = 0
+
+
 # --- 키 입력 후 메인 루프가 해야 할 일 -------------------------------------------
 
 
@@ -137,6 +145,8 @@ class App:
         self.selected = 0
         self.input: Any = Normal()
         self._message: Optional[Tuple[str, float]] = None
+        # A 모드에서 Enter로 서버에 들어갈 때 돌아갈 모드
+        self.last_mode = mode if mode is not Mode.OVERVIEW else Mode.QUERIES
 
     def settings(self) -> Settings:
         return Settings(self.server, self.mode, self.interval, self.paused, self.show_idle)
@@ -171,7 +181,10 @@ class App:
 
     def table(self) -> views.Table:
         """필터와 정렬을 적용한 현재 모드의 테이블."""
-        t = views.build(self.mode, self.cur(), self.show_idle)
+        if self.mode is Mode.OVERVIEW:
+            t = views.overview(self.servers)
+        else:
+            t = views.build(self.mode, self.cur(), self.show_idle)
         t.filter(self.filter)
         t.sort(self.sort.get(self.mode))
         return t
@@ -182,6 +195,8 @@ class App:
     def _set_mode(self, m: Mode) -> Action:
         if m == self.mode:
             return command(Refresh())
+        if m is not Mode.OVERVIEW:
+            self.last_mode = m
         self.mode = m
         self.selected = 0
         if m.uses_current_op:
@@ -210,6 +225,8 @@ class App:
             return self._normal_key(key)
         if isinstance(inp, Help):
             return NONE  # 아무 키나 누르면 도움말을 닫는다
+        if isinstance(inp, Picker):
+            return self._picker_key(inp, key)
         if isinstance(inp, Detail):
             lines = len(inp.text.splitlines())
             sc = inp.scroll
@@ -321,6 +338,12 @@ class App:
         elif key == "r":
             c, desc = self._current_sort(self.table())
             self.sort[self.mode] = (c, not desc)
+        elif key == "w":
+            self.input = Picker(sel=self.server)
+        elif key == "ENTER" and self.mode is Mode.OVERVIEW:
+            row = self._selected_row()
+            if row is not None and row.server is not None:
+                return self._focus(row.server, self.last_mode)
         elif key in ("ENTER", "e"):
             row = self._selected_row()
             if row is not None and row.detail is not None:
@@ -347,9 +370,63 @@ class App:
     def _switch_server(self, delta: int) -> Action:
         count = len(self.servers)
         if count <= 1:
-            self.flash("only one server configured (pass several URIs to monitor more)")
+            self.flash("only one server configured (pass several URIs or names to monitor more)")
             return NONE
-        self.server = (self.server + delta) % count
+        if self.mode is Mode.OVERVIEW:
+            self._move_sel(delta)  # A 모드에서는 행 이동과 같다
+            return NONE
+        return self._focus((self.server + delta) % count, self.mode)
+
+    def _focus(self, index: int, mode: Mode) -> Action:
+        """서버 `index`를 화면에 띄운다 (A 모드였으면 `mode`로 바꾼다)."""
+        self.server = index
+        if self.mode is Mode.OVERVIEW:
+            self.mode = mode
+        if self.mode.uses_current_op:
+            self.servers[index].ops = []
         self.selected = 0
-        self.flash(f"server {self.server + 1}: {self.servers[self.server].name}")
+        self.flash(f"server {index + 1}/{len(self.servers)}: {self.servers[index].name}")
         return SETTINGS
+
+    # --- 서버 선택 팝업 ---
+
+    def picker_matches(self, query: str) -> List[int]:
+        """이름 또는 호스트에 `query`가 들어간 서버 번호 (대소문자 무시)."""
+        q = query.lower()
+        out = []
+        for i, st in enumerate(self.servers):
+            host = str((st.status or {}).get("host", ""))
+            if q in st.name.lower() or q in host.lower():
+                out.append(i)
+        return out
+
+    def _picker_key(self, p: Picker, key: str) -> Action:
+        matches = self.picker_matches(p.query)
+        pos = matches.index(p.sel) if p.sel in matches else 0
+        if key == "ESC":
+            return NONE
+        if key == "ENTER":
+            if not matches:
+                self.flash(f"no server matches {p.query!r}")
+                return NONE
+            mode = self.last_mode if self.mode is Mode.OVERVIEW else self.mode
+            return self._focus(matches[pos], mode)
+        if key in ("DOWN", "TAB") and matches:
+            p = replace(p, sel=matches[min(pos + 1, len(matches) - 1)])
+        elif key in ("UP", "BTAB") and matches:
+            p = replace(p, sel=matches[max(pos - 1, 0)])
+        elif key == "PGDN" and matches:
+            p = replace(p, sel=matches[min(pos + 10, len(matches) - 1)])
+        elif key == "PGUP" and matches:
+            p = replace(p, sel=matches[max(pos - 10, 0)])
+        elif key == "BACKSPACE":
+            q = p.query[:-1]
+            m = self.picker_matches(q)
+            p = Picker(q, p.sel if p.sel in m else (m[0] if m else 0))
+        elif len(key) == 1 and key.isprintable():
+            q = p.query + key
+            m = self.picker_matches(q)
+            p = Picker(q, p.sel if p.sel in m else (m[0] if m else 0))
+        self.input = p
+        return NONE
+

@@ -5,8 +5,8 @@ import time
 from bson import Int64
 
 from mongotop import views
-from mongotop.app import QUIT, SETTINGS, App, Help, Normal, Prompt, command
-from mongotop.collector import Kill, KillTarget, Refresh, Snapshot, SnapshotMsg
+from mongotop.app import QUIT, SETTINGS, App, Help, Normal, Picker, Prompt, command
+from mongotop.collector import ErrorMsg, Kill, KillTarget, Refresh, Snapshot, SnapshotMsg
 from mongotop.model import Mode, Op
 from mongotop.ui import Buffer, UiState, draw
 
@@ -136,6 +136,44 @@ def test_renders_every_mode_and_popups():
     app.input = Normal()
     app.handle_key("ENTER")
     assert "opid: 42" in screen(app, 120, 40)
+
+
+def test_overview_mode_and_picker():
+    app = App(["prod/db1:27017", "prod/db2:27017", "stage"], Mode.OVERVIEW, 1.0, False)
+    for up in (1000, 2000):
+        for i in (0, 1):
+            app.on_message(SnapshotMsg(i, Snapshot(mode=Mode.OVERVIEW, status=status(up, up))))
+    app.on_message(ErrorMsg(2, "serverStatus failed: connection refused"))
+    t = app.table()
+    assert [r.server for r in t.rows] == [0, 1, 2]
+    assert t.rows[2].cells[-1].text.startswith("DOWN")
+    assert all(len(r.cells) == len(t.columns) for r in t.rows)
+    s = screen(app, 180, 20)
+    assert "[A] All Servers" in s and "3 servers" in s and "2 up │ 1 down" in s
+    assert "DOWN: stage" in s
+
+    # Enter: 선택한 서버로 들어가 마지막 모드(Q)로
+    app.handle_key("DOWN")
+    assert app.handle_key("ENTER") == SETTINGS
+    assert (app.server, app.mode) == (1, Mode.QUERIES)
+    assert app.handle_key("A") == SETTINGS
+
+    # w: 이름으로 거르고 Enter
+    app.handle_key("w")
+    assert isinstance(app.input, Picker)
+    for c in "stag":
+        app.handle_key(c)
+    assert app.picker_matches(app.input.query) == [2]
+    assert "stage" in screen(app, 120, 30)
+    assert app.handle_key("ENTER") == SETTINGS
+    assert app.server == 2 and app.mode is Mode.QUERIES
+
+    # 팝업에서 화살표 이동, Esc 취소
+    app.handle_key("w")
+    app.handle_key("UP")
+    assert app.input.sel == 1
+    app.handle_key("ESC")
+    assert app.input == Normal() and app.server == 2
 
 
 def test_buffer_wide_chars():

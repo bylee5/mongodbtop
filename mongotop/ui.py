@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from . import views
-from .app import Detail, Help, Prompt, App
+from .app import App, Detail, Help, Picker, Prompt
 from .collector import Collector, Worker
 from .model import Mode
 from .util import disp
@@ -124,6 +124,7 @@ HELP = [
     ("R", "Replication — replica set members, lag, oplog window"),
     ("O", "Collection activity — per-namespace load from `top`"),
     ("D", "Database sizes — dbStats for every database"),
+    ("A", "All servers — one summary row per server; Enter opens it"),
     ("", ""),
     ("", "Actions"),
     ("↑ ↓ PgUp PgDn", "select row"),
@@ -135,12 +136,13 @@ HELP = [
     ("s", "set refresh interval;  space refreshes now"),
     ("p", "pause / resume"),
     ("n / N, Tab", "next / previous server"),
+    ("w", "pick a server from a list (type to filter)"),
     ("q, Ctrl-C", "quit"),
 ]
 
 KEYS_HINT = (
-    "Q T L C S B R O D: modes │ ↑↓ select │ ⏎ detail │ k kill │ f filter │ < > r sort │ "
-    "i idle │ s interval │ p pause │ n server │ ? help │ q quit"
+    "Q T L C S B R O D A: modes │ ↑↓ select │ ⏎ detail │ k kill │ f filter │ < > r sort │ "
+    "i idle │ s interval │ p pause │ n/w server │ ? help │ q quit"
 )
 
 EMPTY_MSG = {
@@ -162,7 +164,10 @@ def draw(app: App, buf: Buffer, ui: UiState) -> None:
     w, h = buf.w, buf.h
     if w <= 0 or h <= 0:
         return
-    header = views.header(app.cur())
+    if app.mode is Mode.OVERVIEW:
+        header = views.overview_header(app.servers)
+    else:
+        header = views.header(app.cur())
     # 레이아웃: 제목 1줄, 헤더, 본문(최소 3줄), 상태 1줄. 공간이 모자라면 헤더를 줄인다.
     header_h = max(0, min(len(header), h - 2 - 3))
     body_y = 1 + header_h
@@ -179,6 +184,8 @@ def draw(app: App, buf: Buffer, ui: UiState) -> None:
         _draw_help(buf)
     elif isinstance(app.input, Detail):
         _draw_detail(buf, app.input)
+    elif isinstance(app.input, Picker):
+        _draw_picker(app, buf, app.input)
 
 
 def _draw_title(app: App, buf: Buffer) -> None:
@@ -190,11 +197,13 @@ def _draw_title(app: App, buf: Buffer) -> None:
         (" ", PLAIN),
         (f"[{app.mode.key}] {app.mode.title}", Style(bold=True)),
         (
-            f"  │ server {app.server + 1}/{len(app.servers)}: {st.name}  │ every {disp(app.interval)}s",
+            f"  │ {len(app.servers)} servers  │ every {disp(app.interval)}s"
+            if app.mode is Mode.OVERVIEW
+            else f"  │ server {app.server + 1}/{len(app.servers)}: {st.name}  │ every {disp(app.interval)}s",
             PLAIN,
         ),
     ]
-    if st.updated is not None:
+    if st.updated is not None and app.mode is not Mode.OVERVIEW:
         spans.append((f"  │ {st.updated:%H:%M:%S}", PLAIN))
     if app.paused:
         spans.append(("  PAUSED ", Style(fg="black", bg="yellow")))
@@ -230,7 +239,7 @@ def _draw_table(app: App, buf: Buffer, ui: UiState, y0: int, h: int) -> None:
 
     # 위쪽 테두리 + 제목
     buf.put(y0, 0, "─" * buf.w)
-    if st.error:
+    if st.error and app.mode is not Mode.OVERVIEW:
         buf.put(y0, 0, f" ERROR: {st.error} ", Style(fg="red", bold=True))
     else:
         buf.put(y0, 0, f" {t.title} ", Style(fg="gray"))
@@ -266,7 +275,7 @@ def _draw_table(app: App, buf: Buffer, ui: UiState, y0: int, h: int) -> None:
                 _cell(buf, y, x, cw, cell.text, c.right, style)
     elif not rows:
         ui.offset = 0
-        if not st.error and h > 3:
+        if (not st.error or app.mode is Mode.OVERVIEW) and h > 3:
             msg = EMPTY_MSG.get(app.mode, "no data yet")
             x = max(0, (buf.w - text_width(msg)) // 2)
             buf.put(y0 + 2, x, msg, Style(fg="darkgray"))
@@ -330,6 +339,46 @@ def _draw_help(buf: Buffer) -> None:
         else:
             xx = buf.put(yy, x + 1, f"  {k:<16}", Style(fg="yellow", bold=True), limit=lim)
             buf.put(yy, xx, v, limit=lim)
+
+
+def _server_badge(st) -> Tuple[str, Style]:
+    if st.error:
+        return "DOWN", TONE_STYLE[Tone.BAD]
+    if st.status is None:
+        return "....", TONE_STYLE[Tone.DIM]
+    return " UP ", TONE_STYLE[Tone.GOOD]
+
+
+def _draw_picker(app: App, buf: Buffer, p: Picker) -> None:
+    x, y, w, h = _centered(buf, 60, 70)
+    if w < 10 or h < 4:
+        return
+    _box(buf, x, y, w, h, " servers — type to filter, ↑↓ select, Enter open, Esc cancel ")
+    lim = x + w - 1
+    xx = buf.put(y + 1, x + 2, "> ", Style(fg="yellow", bold=True), limit=lim)
+    xx = buf.put(y + 1, xx, p.query, limit=lim)
+    buf.put(y + 1, xx, "█", Style(fg="yellow"), limit=lim)
+    matches = app.picker_matches(p.query)
+    visible = h - 4
+    if not matches:
+        buf.put(y + 3, x + 2, "no matching server", Style(fg="darkgray"), limit=lim)
+        return
+    pos = matches.index(p.sel) if p.sel in matches else 0
+    top = max(0, min(pos - visible // 2, len(matches) - visible))
+    for row, i in enumerate(matches[top : top + visible]):
+        st = app.servers[i]
+        yy = y + 2 + row
+        base = Style(reverse=True) if i == matches[pos] else PLAIN
+        buf.fill(yy, x + 1, lim, base)
+        mark = "*" if i == app.server else " "
+        xx = buf.put(yy, x + 2, f"{mark} ", base, limit=lim)
+        badge, bstyle = _server_badge(st)
+        xx = buf.put(yy, xx, badge, bstyle.over(base), limit=lim)
+        role = ""
+        if st.status is not None:
+            g = views.Gauges.from_status(st.status)
+            role = f"{g.role} {g.set}".strip()
+        buf.put(yy, xx, f" {st.name:<34} {role}", base, limit=lim)
 
 
 def _draw_detail(buf: Buffer, d: Detail) -> None:

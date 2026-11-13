@@ -212,8 +212,9 @@ class Collector:
         snap = Snapshot(mode=mode, status=status)
         if mode.uses_current_op:
             snap.ops = self._current_op(mode, show_idle)
-        elif mode is Mode.REPLICATION:
-            snap.repl = self._repl_status()
+        elif mode in (Mode.REPLICATION, Mode.OVERVIEW):
+            # 요약 화면의 복제 지연에도 쓴다. 레플리카셋이 아니면 error만 채워진다.
+            snap.repl = self._repl_status(oplog=mode is Mode.REPLICATION)
         elif mode is Mode.TOP:
             try:
                 snap.top = parse_top(self.admin.command("top"))
@@ -257,12 +258,14 @@ class Collector:
         # innotop이 자기 자신을 숨기듯 우리 모니터링 연결은 숨긴다.
         return [o for o in map(Op.from_doc, docs) if o.app != APP_NAME]
 
-    def _repl_status(self) -> ReplStatus:
+    def _repl_status(self, oplog: bool = True) -> ReplStatus:
         try:
             d = self.admin.command("replSetGetStatus")
         except PyMongoError as e:
             return ReplStatus(error=short_err(e))
         r = ReplStatus.from_doc(d)
+        if not oplog:
+            return r
         try:
             r.oplog_window_secs = self._oplog_window()
         except PyMongoError:
@@ -365,11 +368,15 @@ def plan(s: Settings, index: int, failures: int) -> Tuple[Mode, float]:
     """서버 `index`가 이번에 수집할 모드와 다음 수집까지 기다릴 시간.
 
     - 화면에 띄운 서버: 현재 모드 전체 수집, 갱신 주기마다
-    - 그 밖의 서버: serverStatus만 (S 모드 이력용), 최소 5초마다
+    - A(전체 요약) 모드: 모든 서버가 serverStatus + 복제 상태, 갱신 주기마다
+    - 그 밖의 서버: serverStatus만 (S 모드 이력·요약용), 최소 5초마다
     실패가 이어지면 화면에 띄운 서버가 아닌 한 간격을 두 배씩 늘린다 (최대 30초)."""
-    if index == s.server:
+    if s.mode is Mode.OVERVIEW:
+        mode, wait = Mode.OVERVIEW, s.interval
+    elif index == s.server:
         return s.mode, s.interval
-    mode, wait = Mode.STATUS, max(s.interval, BACKGROUND_INTERVAL)
+    else:
+        mode, wait = Mode.STATUS, max(s.interval, BACKGROUND_INTERVAL)
     if failures:
         wait = min(MAX_BACKOFF, max(wait, wait * 2 ** min(failures - 1, 5)))
     return mode, wait
@@ -449,6 +456,8 @@ class Worker:
     def send(self, cmd: Command) -> None:
         if isinstance(cmd, Kill):
             targets = [self._threads[cmd.server]]
+        elif self.settings().mode is Mode.OVERVIEW:
+            targets = self._threads
         else:
             targets = [self._threads[self.settings().server]]
         for t in targets:

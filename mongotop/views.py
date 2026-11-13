@@ -54,6 +54,7 @@ class Row:
     tone: Tone = Tone.NORMAL
     detail: Optional[dict] = None
     kill: Optional[KillTarget] = None
+    server: Optional[int] = None  # A 모드: 이 행이 가리키는 서버 번호
 
 
 @dataclass(frozen=True)
@@ -157,7 +158,121 @@ def build(mode: Mode, st: "ServerState", show_idle: bool) -> Table:
         return _replication(st)
     if mode is Mode.TOP:
         return _top(st, show_idle)
+    if mode is Mode.OVERVIEW:
+        return overview([st])
     return _databases(st)
+
+
+def _self_lag(st: "ServerState") -> Optional[float]:
+    r = st.repl
+    if r is None or r.error:
+        return None
+    me = next((m for m in r.members if m.is_self), None)
+    return me.lag_secs if me is not None else None
+
+
+def overview_header(servers: List["ServerState"]) -> List[str]:
+    """A 모드 헤더: 전체 서버 합계."""
+    up = [st for st in servers if st.status is not None and not st.error]
+    down = [st for st in servers if st.error]
+    waiting = len(servers) - len(up) - len(down)
+    ops = conns = 0.0
+    for st in up:
+        conns += Gauges.from_status(st.status).conn_current
+        r = rates(st.status, st.prev_status) if st.prev_status is not None else None
+        if r is not None:
+            ops += r.total_ops()
+    lags = [lag for lag in map(_self_lag, servers) if lag is not None]
+    line = (
+        f"{len(servers)} servers │ {len(up)} up │ {len(down)} down"
+        f"{f' │ {waiting} connecting' if waiting else ''} │ total ops/s {fmt_rate(ops)} │ "
+        f"conns {fmt_num(conns)} │ max repl lag {fmt_secs(max(lags)) if lags else 'n/a'}"
+    )
+    lines = [line]
+    if down:
+        names = ", ".join(st.name for st in down[:5]) + (" …" if len(down) > 5 else "")
+        lines.append(f"DOWN: {names}")
+    return lines
+
+
+def overview(servers: List["ServerState"]) -> Table:
+    """A 모드: 서버마다 한 줄. Enter로 그 서버의 화면으로 들어간다."""
+    rows: List[Row] = []
+    for i, st in enumerate(servers):
+        status = st.status
+        err = (st.error or "").replace("serverStatus failed: ", "")
+        if status is None:
+            text = f"DOWN: {err}" if st.error else "connecting…"
+            cells = [s(st.name), s("")] + [n(-1.0, "") for _ in range(15)] + [s(text)]
+            rows.append(Row(cells, tone=Tone.BAD if st.error else Tone.DIM, server=i))
+            continue
+        g = Gauges.from_status(status)
+        r = rates(status, st.prev_status) if st.prev_status is not None else None
+        lag = _self_lag(st)
+        used, dirty = g.cache_used_pct(), g.cache_dirty_pct()
+        queued = g.queue_r + g.queue_w
+
+        def rt(v: Optional[float], fmt=fmt_rate) -> Cell:
+            return n(-1.0, "") if v is None else n(v, fmt(v))
+
+        if st.error:
+            tone, text = Tone.BAD, f"DOWN: {err}"
+        elif (lag is not None and lag >= 10.0) or dirty > 20 or used > 95 or queued > 0:
+            tone, text = Tone.WARN, "ok"
+        else:
+            tone, text = Tone.NORMAL, "ok"
+        role = f"{g.role} {g.set}" if g.set else g.role
+        rows.append(
+            Row(
+                [
+                    s(st.name),
+                    s(role),
+                    s(g.version),
+                    n(g.uptime, fmt_secs(g.uptime)),
+                    n(g.conn_current, fmt_num(g.conn_current)),
+                    rt(r.total_ops() if r else None),
+                    rt(r.insert if r else None),
+                    rt(r.query if r else None),
+                    rt(r.update if r else None),
+                    rt(r.delete if r else None),
+                    rt(r.net_in if r else None, fmt_bytes),
+                    rt(r.net_out if r else None, fmt_bytes),
+                    n(queued, f"{disp(g.queue_r)}|{disp(g.queue_w)}"),
+                    rt(r.lat_read_ms if r else None, lambda v: f"{v:.2f}"),
+                    rt(r.lat_write_ms if r else None, lambda v: f"{v:.2f}"),
+                    n(used, fmt_pct(used)),
+                    rt(lag, fmt_secs),
+                    s(text),
+                ],
+                tone=tone,
+                detail=status,
+                server=i,
+            )
+        )
+    return Table(
+        title=f"{len(servers)} servers (Enter = open server, w = pick server)",
+        columns=[
+            col("Server", 28),
+            col("Role", 14),
+            col("Version", 7),
+            num_col("Up", 7),
+            num_col("Conns", 6),
+            num_col("Ops/s", 7),
+            num_col("ins", 6),
+            num_col("qry", 6),
+            num_col("upd", 6),
+            num_col("del", 6),
+            num_col("netIn", 7),
+            num_col("netOut", 7),
+            num_col("qr|qw", 6),
+            num_col("rLat", 6),
+            num_col("wLat", 6),
+            num_col("Cache", 6),
+            num_col("Lag", 6),
+            col("Status", 0),
+        ],
+        rows=rows,
+    )
 
 
 def _queries(st: "ServerState", show_all: bool) -> Table:

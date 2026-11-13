@@ -144,3 +144,8 @@ def test_collection_plan():
     assert plan(s, 1, 0) == (Mode.STATUS, 5.0), "other servers: serverStatus only, slower"
     assert plan(s, 1, 2) == (Mode.STATUS, 10.0)
     assert plan(s, 1, 9) == (Mode.STATUS, 30.0)
+    a = Settings(server=0, mode=Mode.OVERVIEW, interval=2.0, paused=False, show_idle=False)
+    assert plan(a, 0, 0) == (Mode.OVERVIEW, 2.0)
+    assert plan(a, 3, 0) == (Mode.OVERVIEW, 2.0)
+    assert plan(a, 3, 1) == (Mode.OVERVIEW, 2.0)
+    assert plan(a, 3, 2) == (Mode.OVERVIEW, 4.0)
