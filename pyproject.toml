@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mongotop"
+version = "0.1.0"
+description = "innotop-style real-time TUI monitor for MongoDB"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "pymongo>=4.6",
+    "windows-curses>=2.3; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+mongotop = "mongotop.cli:main"
+
+[tool.setuptools]
+packages = ["mongotop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

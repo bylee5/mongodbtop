@@ -1,0 +1,356 @@
+"""MongoDB와 통신한다. 모니터링 대상 서버마다 `Collector`가 하나씩 있으며,
+`Worker` 스레드가 백그라운드에서 현재 수집기를 돌려 스냅샷을 UI로 보낸다."""
+
+from __future__ import annotations
+
+import queue
+import re
+import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import parse_qs
+
+from pymongo import MongoClient
+from pymongo import uri_parser
+from pymongo.errors import OperationFailure, PyMongoError, ServerSelectionTimeoutError
+
+from .model import DbStat, Mode, Op, ReplStatus, TopRaw, parse_top
+from .util import compact
+
+APP_NAME = "mongotop"
+
+
+class CollectError(Exception):
+    """수집 실패. 메시지는 이미 사람이 읽을 수 있는 형태다."""
+
+
+def short_err(e: BaseException) -> str:
+    """드라이버 에러를 짧은 메시지로 만든다. 서버 커맨드 에러는
+    "CodeName: message" 형태로 보여준다."""
+    if isinstance(e, OperationFailure):
+        details = e.details or {}
+        name = details.get("codeName") or f"code {e.code}"
+        msg = details.get("errmsg") or str(e)
+        return f"{name}: {msg}"
+    if isinstance(e, ServerSelectionTimeoutError):
+        # 토폴로지 설명이 길게 붙으므로 앞부분만 쓴다.
+        return str(e).split(", Timeout:")[0]
+    return str(e) or type(e).__name__
+
+
+def mask_uri(uri: str) -> str:
+    """에러 메시지에 비밀번호가 찍히지 않도록 URI의 인증 정보를 가린다."""
+    return re.sub(r"(mongodb(?:\+srv)?://)[^@/]*@", r"\1***@", uri)
+
+
+@dataclass
+class ConnectOpts:
+    username: Optional[str] = None
+    password: Optional[str] = None
+    auth_db: Optional[str] = None
+    # 단일 호스트 URI여도 direct connection을 강제하지 않는다.
+    no_direct: bool = False
+
+
+def connect(uri: str, o: ConnectOpts) -> Tuple[str, MongoClient]:
+    """URI 하나에 대한 클라이언트를 만든다. `replicaSet`이 없는 단일 호스트 URI는
+    토폴로지 탐색으로 프라이머리에 라우팅되지 않고 (innotop처럼) *그 노드*를
+    모니터링하도록 직접 접속한다."""
+    srv = uri.startswith("mongodb+srv://")
+    query = uri.split("?", 1)[1] if "?" in uri else ""
+    given = {k.lower() for k in parse_qs(query, keep_blank_values=True)}
+
+    if srv:
+        # SRV는 DNS 조회가 필요하므로 여기서는 해석하지 않는다.
+        netloc = uri[len("mongodb+srv://") :].split("/", 1)[0].split("?", 1)[0]
+        has_user = "@" in netloc
+        hosts = [netloc.rsplit("@", 1)[-1]]
+    else:
+        try:
+            parsed = uri_parser.parse_uri(uri)
+        except Exception as e:  # InvalidURI, ConfigurationError, ValueError ...
+            raise ValueError(f"invalid MongoDB URI: {mask_uri(uri)}: {e}") from e
+        has_user = bool(parsed.get("username"))
+        hosts = [f"{h}:{p}" for h, p in parsed["nodelist"]]
+
+    kwargs: Dict[str, Any] = {"appname": APP_NAME, "tz_aware": True}
+    if "serverselectiontimeoutms" not in given:
+        kwargs["serverSelectionTimeoutMS"] = 5000
+    if "connecttimeoutms" not in given:
+        kwargs["connectTimeoutMS"] = 5000
+    if (
+        not o.no_direct
+        and not srv
+        and len(hosts) == 1
+        and "replicaset" not in given
+        and "directconnection" not in given
+    ):
+        kwargs["directConnection"] = True
+    if o.username is not None or o.password is not None:
+        if o.username is not None:
+            kwargs["username"] = o.username
+        if o.password is not None:
+            kwargs["password"] = o.password
+        if o.auth_db:
+            kwargs["authSource"] = o.auth_db
+    elif o.auth_db and has_user:
+        kwargs["authSource"] = o.auth_db
+
+    try:
+        client = MongoClient(uri, **kwargs)
+    except Exception as e:
+        raise ValueError(f"invalid MongoDB URI: {mask_uri(uri)}: {e}") from e
+    return ",".join(hosts), client
+
+
+@dataclass
+class Snapshot:
+    """serverStatus와 모드별 데이터. 해당 모드가 쓰지 않는 필드는 None."""
+
+    mode: Mode
+    status: dict
+    ops: Optional[List[Op]] = None
+    repl: Optional[ReplStatus] = None
+    top: Optional[Dict[str, TopRaw]] = None
+    dbs: Optional[List[DbStat]] = None
+    taken: float = field(default_factory=time.monotonic)
+
+
+@dataclass(frozen=True)
+class KillTarget:
+    """kind: "op" (value = opid) 또는 "session" (value = lsid 문서)."""
+
+    kind: str
+    value: Any
+
+    @classmethod
+    def op(cls, opid: Any) -> "KillTarget":
+        return cls("op", opid)
+
+    @classmethod
+    def session(cls, lsid: dict) -> "KillTarget":
+        return cls("session", lsid)
+
+    def __hash__(self) -> int:  # value가 dict일 수 있다
+        return hash((self.kind, compact(self.value)))
+
+
+class Collector:
+    def __init__(self, client: MongoClient):
+        self.client = client
+        self._dbs_cache: Optional[Tuple[float, List[DbStat]]] = None
+
+    @property
+    def admin(self):
+        return self.client.admin
+
+    def server_status(self) -> dict:
+        return self.admin.command("serverStatus")
+
+    def collect(self, mode: Mode, show_idle: bool = False) -> Snapshot:
+        try:
+            status = self.server_status()
+        except PyMongoError as e:
+            raise CollectError(f"serverStatus failed: {short_err(e)}") from e
+        snap = Snapshot(mode=mode, status=status)
+        if mode.uses_current_op:
+            snap.ops = self._current_op(mode, show_idle)
+        elif mode is Mode.REPLICATION:
+            snap.repl = self._repl_status()
+        elif mode is Mode.TOP:
+            try:
+                snap.top = parse_top(self.admin.command("top"))
+            except PyMongoError as e:
+                raise CollectError(
+                    f"top failed (not supported on mongos?): {short_err(e)}"
+                ) from e
+        elif mode is Mode.DATABASES:
+            snap.dbs = self._db_stats()
+        snap.taken = time.monotonic()
+        return snap
+
+    def _current_op(self, mode: Mode, show_idle: bool) -> List[Op]:
+        stage = {
+            "allUsers": True,
+            "idleConnections": show_idle,
+            # 비활성 트랜잭션은 idle 세션으로 나타난다.
+            "idleSessions": True if mode is Mode.TRANSACTIONS else show_idle,
+        }
+        pipeline: List[dict] = [{"$currentOp": stage}]
+        if mode is Mode.TRANSACTIONS:
+            # retryable write에도 `transaction` 필드가 있으므로,
+            # autocommit: false 인 다중 문서 트랜잭션만 고른다.
+            pipeline.append({"$match": {"transaction.parameters.autocommit": False}})
+        elif mode is Mode.LOCKS:
+            pipeline.append(
+                {
+                    "$match": {
+                        "$or": [
+                            {"waitingForLock": True},
+                            {"waitingForLatch": {"$exists": True}},
+                            {"waitingForFlowControl": True},
+                        ]
+                    }
+                }
+            )
+        try:
+            docs = list(self.admin.aggregate(pipeline))
+        except PyMongoError as e:
+            raise CollectError(f"$currentOp failed: {short_err(e)}") from e
+        # innotop이 자기 자신을 숨기듯 우리 모니터링 연결은 숨긴다.
+        return [o for o in map(Op.from_doc, docs) if o.app != APP_NAME]
+
+    def _repl_status(self) -> ReplStatus:
+        try:
+            d = self.admin.command("replSetGetStatus")
+        except PyMongoError as e:
+            return ReplStatus(error=short_err(e))
+        r = ReplStatus.from_doc(d)
+        try:
+            r.oplog_window_secs = self._oplog_window()
+        except PyMongoError:
+            r.oplog_window_secs = None
+        return r
+
+    def _oplog_window(self) -> Optional[float]:
+        """가장 오래된 oplog 항목과 가장 최근 항목 사이의 시간."""
+        oplog = self.client.local["oplog.rs"]
+        first = oplog.find_one({}, {"ts": 1}, sort=[("$natural", 1)])
+        last = oplog.find_one({}, {"ts": 1}, sort=[("$natural", -1)])
+
+        def ts(d: Optional[dict]) -> Optional[float]:
+            t = (d or {}).get("ts")
+            return float(t.time) if hasattr(t, "time") else None
+
+        a, b = ts(first), ts(last)
+        return b - a if a is not None and b is not None else None
+
+    def _db_stats(self) -> List[DbStat]:
+        """dbStats는 비용이 클 수 있어 결과를 10초간 캐시한다."""
+        if self._dbs_cache and time.monotonic() - self._dbs_cache[0] < 10.0:
+            return list(self._dbs_cache[1])
+        try:
+            listing = self.admin.command({"listDatabases": 1, "nameOnly": True})
+        except PyMongoError as e:
+            raise CollectError(f"listDatabases failed: {short_err(e)}") from e
+        names = [
+            d["name"]
+            for d in listing.get("databases", [])
+            if isinstance(d, dict) and isinstance(d.get("name"), str)
+        ]
+        out: List[DbStat] = []
+        for name in names[:500]:
+            try:
+                out.append(DbStat.from_doc(name, self.client[name].command("dbStats")))
+            except PyMongoError as e:
+                out.append(DbStat(name=f"{name} (error: {short_err(e)})"))
+        self._dbs_cache = (time.monotonic(), out)
+        return list(out)
+
+    def kill(self, target: KillTarget) -> str:
+        if target.kind == "op":
+            self.admin.command({"killOp": 1, "op": target.value})
+            return f"killOp sent for opid {compact(target.value)}"
+        self.admin.command({"killSessions": [target.value]})
+        return "killSessions sent (transaction will be aborted)"
+
+
+@dataclass
+class Settings:
+    """백그라운드 스레드가 해야 할 일. UI가 갱신한다."""
+
+    server: int
+    mode: Mode
+    interval: float
+    paused: bool
+    show_idle: bool
+
+
+@dataclass(frozen=True)
+class Refresh:
+    pass
+
+
+@dataclass(frozen=True)
+class Kill:
+    server: int
+    target: KillTarget
+
+
+Command = Union[Refresh, Kill]
+
+
+@dataclass
+class SnapshotMsg:
+    server: int
+    snap: Snapshot
+
+
+@dataclass
+class ErrorMsg:
+    server: int
+    error: str
+
+
+@dataclass
+class InfoMsg:
+    text: str
+
+
+Message = Union[SnapshotMsg, ErrorMsg, InfoMsg]
+
+
+class Worker(threading.Thread):
+    """백그라운드 루프: 현재 서버/모드의 데이터를 가져온 뒤, 갱신 주기·설정 변경·
+    명령(kill / 새로고침) 중 하나가 올 때까지 기다린다. 수집이 별도 스레드에서
+    돌기 때문에 느린 서버에서도 키 입력이 막히지 않는다."""
+
+    def __init__(self, collectors: List[Collector], settings: Settings, out: "queue.Queue[Message]"):
+        super().__init__(name="mongotop-collector", daemon=True)
+        self._collectors = collectors
+        self._settings = settings
+        self._out = out
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._commands: "queue.Queue[Command]" = queue.Queue()
+        self._stopped = threading.Event()
+
+    def update_settings(self, s: Settings) -> None:
+        with self._lock:
+            self._settings = s
+        self._wake.set()
+
+    def send(self, cmd: Command) -> None:
+        self._commands.put(cmd)
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._stopped.set()
+        self._wake.set()
+
+    def run(self) -> None:
+        while not self._stopped.is_set():
+            with self._lock:
+                s = self._settings
+            if not s.paused:
+                try:
+                    snap = self._collectors[s.server].collect(s.mode, s.show_idle)
+                    self._out.put(SnapshotMsg(s.server, snap))
+                except CollectError as e:
+                    self._out.put(ErrorMsg(s.server, str(e)))
+                except Exception as e:  # 예기치 못한 오류에도 스레드는 살아 있어야 한다
+                    self._out.put(ErrorMsg(s.server, f"{type(e).__name__}: {e}"))
+            self._wake.wait(s.interval)
+            self._wake.clear()
+            while True:
+                try:
+                    cmd = self._commands.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(cmd, Kill):
+                    try:
+                        text = self._collectors[cmd.server].kill(cmd.target)
+                    except Exception as e:
+                        text = f"kill failed: {short_err(e)}"
+                    self._out.put(InfoMsg(text))
