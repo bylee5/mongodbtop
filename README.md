@@ -58,23 +58,69 @@ innotop이 Sleep 스레드를 기본으로 숨기듯, Q 모드는 드라이버�
 ## 사용법
 
 ```sh
-mongotop                                           # mongodb://localhost:27017
+mongotop                                           # 설정의 default, 없으면 mongodb://localhost:27017
+mongotop prod-rs                                   # 설정 파일에 등록한 서버 이름
+mongotop -g prod                                   # 그룹 전체, n 으로 전환
+mongotop prod-rs stage mongodb://db7:27017         # 이름과 URI를 섞어서
+mongotop --list                                    # 등록된 서버 목록
 mongotop mongodb://user:pw@db1:27017 -m R          # 복제 상태부터 시작
-mongotop mongodb://db1:27017 mongodb://db2:27017   # 여러 서버, n 으로 전환
 mongotop -u admin -p secret --auth-db admin        # URI 대신 옵션으로 인증
 MONGODB_URI=mongodb+srv://... mongotop             # 환경변수
 
 # 비대화형(batch) 모드: TSV 출력. 스크립트/로그 수집용
 mongotop -b -m S -c 10 -i 1     # vmstat 처럼 1초마다 한 줄, 10회
 mongotop -b -m Q                # 현재 실행 중인 작업 1회 덤프
-mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복
+mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복 (batch는 첫 서버만)
 ```
 
-옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드, `--idle` idle 표시로 시작,
+옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드,
+`--idle` idle 표시로 시작, `-g/--group`, `--config`, `--list`,
 `-b/--batch`, `-c/--count`(0 = 무한), `--no-direct`.
 
-**단일 호스트 URI**(`replicaSet` 없음)는 자동으로 `directConnection=true`로 접속합니다. innotop처럼 *지정한 그 노드*를
-모니터링하기 위해서입니다(세컨더리를 지정해도 프라이머리로 라우팅되지 않음). 이를 끄려면 `--no-direct`.
+## 여러 서버 관리
+
+### 설정 파일 `~/.mongotop.ini`
+
+경로는 `--config` 또는 환경변수 `MONGOTOP_CONFIG`로 바꿀 수 있습니다. 파일이 없으면 지금처럼 URI로만 동작합니다.
+
+```ini
+[defaults]
+interval = 2
+user = monitor            ; 모든 서버의 기본 사용자
+auth_db = admin
+default = prod            ; 인자 없이 실행했을 때 접속할 서버 또는 그룹 (여러 개는 쉼표로)
+
+[server:prod-rs]
+uri = mongodb://db1:27017,db2:27017,db3:27017/?replicaSet=rs0
+groups = prod
+
+[server:prod-analytics]
+uri = mongodb://db9:27017
+groups = prod, analytics
+password_env = ANALYTICS_PW   ; 이 서버의 비밀번호를 읽을 환경변수
+
+[server:stage]
+uri = mongodb://stage-db:27017
+user = stage_monitor
+```
+
+- 서버 키: `uri`(필수), `groups`, `user`, `auth_db`, `password_env`, `direct`(`no`면 `--no-direct`와 같음)
+- `[defaults]` 키: `interval`, `mode`, `idle`, `user`, `auth_db`, `password_env`, `default`
+- 모르는 키가 있으면 오타로 보고 오류를 냅니다. 인자로 `@prod`처럼 쓰면 그룹을 명시할 수 있습니다.
+
+### 비밀번호
+
+**설정 파일에는 비밀번호를 쓰지 않습니다**(`password` 키가 있으면 오류). 그래서 설정 파일을 팀과 공유하거나 git에 넣어도 됩니다.
+사용자 이름이 정해졌는데 비밀번호가 없을 때 찾는 순서는 다음과 같습니다.
+
+1. `-p`
+2. 서버의 `password_env`가 가리키는 환경변수
+3. `MONGOTOP_PASSWORD_<NAME>` — 이름을 대문자로, 영숫자 외 문자는 `_`로 (`prod-rs` → `MONGOTOP_PASSWORD_PROD_RS`)
+4. `[defaults] password_env`, 그다음 `MONGODB_PASSWORD`
+5. OS 키체인 — `pip install "mongotop[keyring]"` 후 `keyring set mongotop prod-rs` (서버 이름 대신 사용자 이름으로 저장해도 됨)
+6. 터미널에서 입력 (같은 사용자는 한 번만 묻습니다)
+
+URI에 비밀번호가 들어 있으면 그대로 씁니다.
 
 ### 필요 권한
 
@@ -127,6 +173,7 @@ docker exec mongo-test mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,ho
 ```
 mongotop/
   cli.py        CLI(argparse), 접속 오류 안내, batch 모드
+  config.py     설정 파일(~/.mongotop.ini), 서버·그룹 이름 해석, 비밀번호 찾기
   collector.py  MongoDB 접속·수집(서버 커맨드), kill, 백그라운드 수집 스레드
   model.py      모드 정의, $currentOp / replSetGetStatus / top / dbStats 파싱
   metrics.py    serverStatus 게이지와 초당 변화율 계산

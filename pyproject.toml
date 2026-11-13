@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+keyring = ["keyring>=23"]
 
 [project.scripts]
 mongotop = "mongotop.cli:main"

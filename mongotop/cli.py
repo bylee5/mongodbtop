@@ -4,25 +4,32 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
-import os
 import sys
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+from pymongo import MongoClient
 from pymongo.errors import OperationFailure, PyMongoError, ServerSelectionTimeoutError
 
-from . import __version__, views
+from . import __version__, config, views
 from .app import App
-from .collector import CollectError, Collector, ConnectOpts, connect, short_err
+from .collector import CollectError, Collector, connect, short_err
 from .model import Mode
 
 EPILOG = """\
 MODES: Q queries, T transactions, L lock waits, C commands, S status over time,
        B WiredTiger cache, R replication, O collection activity (top), D database sizes
 
+SERVERS: a target is a URI, or a server / group name from the config file
+  (~/.mongotop.ini, or --config / MONGOTOP_CONFIG). See --list.
+
+PASSWORDS are never read from the config file. Lookup order:
+  -p, password_env, MONGOTOP_PASSWORD_<NAME>, MONGODB_PASSWORD, keyring, prompt
+
 EXAMPLES:
   mongotop
-  mongotop mongodb://admin:secret@db1:27017,db2:27017/?replicaSet=rs0 -m R
+  mongotop prod-rs                                      (name from the config file)
+  mongotop -g prod                                      (every server in group prod)
   mongotop mongodb://db1:27017 mongodb://db2:27017      (press n to switch)
   mongotop -b -m S -c 10 -i 1                           (vmstat-like batch output)
 """
@@ -45,23 +52,21 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "uris",
+        "targets",
         nargs="*",
-        metavar="URI",
-        help="MongoDB URI(s); several can be given and switched with `n` "
-        "[env: MONGODB_URI, default: mongodb://localhost:27017]",
+        metavar="TARGET",
+        help="MongoDB URI, or server / group name from the config file "
+        "[default: config 'default', env MONGODB_URI, or mongodb://localhost:27017]",
     )
-    p.add_argument("-i", "--interval", type=float, default=2.0, help="refresh interval in seconds (default 2)")
-    p.add_argument("-m", "--mode", type=_mode, default=Mode.QUERIES, help="start mode: Q T L C S B R O D")
-    p.add_argument("-u", "--username", help="user name (overrides the URI)")
-    p.add_argument(
-        "-p",
-        "--password",
-        default=os.environ.get("MONGODB_PASSWORD"),
-        help="password (overrides the URI) [env: MONGODB_PASSWORD]",
-    )
+    p.add_argument("-g", "--group", action="append", default=[], help="monitor every server in a config group (repeatable)")
+    p.add_argument("--config", help="config file (default ~/.mongotop.ini or env MONGOTOP_CONFIG)")
+    p.add_argument("--list", action="store_true", help="list servers from the config file and exit")
+    p.add_argument("-i", "--interval", type=float, help="refresh interval in seconds (default 2)")
+    p.add_argument("-m", "--mode", type=_mode, help="start mode: Q T L C S B R O D (default Q)")
+    p.add_argument("-u", "--username", help="user name (overrides the URI / config)")
+    p.add_argument("-p", "--password", help="password (overrides everything else)")
     p.add_argument("--auth-db", help="authentication database")
-    p.add_argument("--idle", action="store_true", help="start with idle connections / inactive rows shown")
+    p.add_argument("--idle", action="store_true", default=None, help="start with idle connections / inactive rows shown")
     p.add_argument("--no-direct", action="store_true", help="do not force a direct connection for single-host URIs")
     p.add_argument("-b", "--batch", action="store_true", help="non-interactive mode: tab-separated output instead of the TUI")
     p.add_argument("-c", "--count", type=int, default=1, help="batch iterations (0 = forever, default 1)")
@@ -74,7 +79,8 @@ def friendly_error(server: str, e: BaseException) -> str:
     hint_auth = (
         "pass credentials, e.g.\n"
         '  mongotop "mongodb://USER:PASSWORD@HOST:27017/?authSource=admin"\n'
-        "  mongotop mongodb://HOST:27017 -u USER -p PASSWORD --auth-db admin"
+        "  mongotop mongodb://HOST:27017 -u USER -p PASSWORD --auth-db admin\n"
+        "  or set user / password_env for the server in ~/.mongotop.ini"
     )
     if isinstance(e, OperationFailure):
         msg = (e.details or {}).get("errmsg") or str(e)
@@ -96,6 +102,23 @@ def friendly_error(server: str, e: BaseException) -> str:
             "firewall and whether TLS is required (tls=true in the URI)."
         )
     return f"cannot run serverStatus on {server}: {short_err(e)}"
+
+
+def open_targets(targets: List[config.Target]) -> List[Tuple[str, MongoClient]]:
+    """접속 대상마다 클라이언트를 만든다."""
+    out: List[Tuple[str, MongoClient]] = []
+    for t in targets:
+        hosts, client = connect(t.uri, t.opts)
+        out.append((t.label or hosts, client))
+    # 같은 노드가 여러 대상에 들어 있으면 한 번만 본다.
+    seen, unique = set(), []
+    for name, c in out:
+        if name in seen:
+            c.close()
+            continue
+        seen.add(name)
+        unique.append((name, c))
+    return unique
 
 
 def run_batch(collector: Collector, name: str, mode: Mode, interval: float, count: int, idle: bool) -> None:
@@ -128,31 +151,48 @@ def run_batch(collector: Collector, name: str, mode: Mode, interval: float, coun
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
-    if not 0.1 <= args.interval <= 3600.0:
+    try:
+        cfg = config.load(args.config)
+    except config.ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    if args.list:
+        print(config.describe(cfg))
+        return 0
+
+    interval = args.interval if args.interval is not None else (cfg.interval or 2.0)
+    if not 0.1 <= interval <= 3600.0:
         print("error: --interval must be between 0.1 and 3600 seconds", file=sys.stderr)
         return 2
     if args.count < 0:
         print("error: --count must be 0 or more", file=sys.stderr)
         return 2
-    uris = args.uris or [os.environ.get("MONGODB_URI", "mongodb://localhost:27017")]
-    copts = ConnectOpts(args.username, args.password, args.auth_db, args.no_direct)
+    idle = args.idle if args.idle is not None else bool(cfg.idle)
 
-    names: List[str] = []
-    collectors: List[Collector] = []
+    cli = config.CliAuth(args.username, args.password, args.auth_db, args.no_direct)
     try:
-        for uri in uris:
-            name, client = connect(uri, copts)
-            names.append(name)
-            collectors.append(Collector(client))
+        targets = config.resolve(args.targets, args.group, cfg, cli)
+        opened = open_targets(targets)
+    except config.ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     except ValueError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    except (KeyboardInterrupt, EOFError):  # 비밀번호 입력 중 취소
+        return 130
+    names = [n for n, _ in opened]
+    collectors = [Collector(c) for _, c in opened]
+
+    mode = args.mode or cfg.mode or Mode.QUERIES
 
     # 첫 번째 서버에 접속할 수 없으면 명확한 메시지와 함께 바로 종료한다.
     try:
         collectors[0].server_status()
     except PyMongoError as e:
         print(f"error: {friendly_error(names[0], e)}", file=sys.stderr)
+        for c in collectors:
+            c.client.close()
         return 1
 
     try:
@@ -165,11 +205,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
             except (AttributeError, ValueError):
                 pass
-            run_batch(collectors[0], names[0], args.mode, args.interval, args.count, args.idle)
+            if len(collectors) > 1:
+                print(f"note: batch mode shows the first server only ({names[0]})", file=sys.stderr)
+            run_batch(collectors[0], names[0], mode, interval, args.count, idle)
         else:
             from .ui import run_tui  # curses는 TUI에서만 필요하다
 
-            run_tui(collectors, names, args.mode, args.interval, args.idle)
+            run_tui(collectors, names, mode, interval, idle)
     except CollectError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
