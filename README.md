@@ -62,6 +62,7 @@ mongotop                                           # 설정의 default, 없으�
 mongotop prod-rs                                   # 설정 파일에 등록한 서버 이름
 mongotop -g prod                                   # 그룹 전체, n 으로 전환
 mongotop prod-rs stage mongodb://db7:27017         # 이름과 URI를 섞어서
+mongotop mongodb://db1:27017/?replicaSet=rs0 --expand   # 레플리카셋 멤버마다 따로
 mongotop --list                                    # 등록된 서버 목록
 mongotop mongodb://user:pw@db1:27017 -m R          # 복제 상태부터 시작
 mongotop -u admin -p secret --auth-db admin        # URI 대신 옵션으로 인증
@@ -74,7 +75,7 @@ mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복 (ba
 ```
 
 옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드,
-`--idle` idle 표시로 시작, `-g/--group`, `--config`, `--list`,
+`--idle` idle 표시로 시작, `-g/--group`, `--config`, `--list`, `--expand`,
 `-b/--batch`, `-c/--count`(0 = 무한), `--no-direct`.
 
 ## 여러 서버 관리
@@ -93,6 +94,7 @@ default = prod            ; 인자 없이 실행했을 때 접속할 서버 또�
 [server:prod-rs]
 uri = mongodb://db1:27017,db2:27017,db3:27017/?replicaSet=rs0
 groups = prod
+expand = members          ; 멤버마다 따로 모니터링
 
 [server:prod-analytics]
 uri = mongodb://db9:27017
@@ -104,8 +106,8 @@ uri = mongodb://stage-db:27017
 user = stage_monitor
 ```
 
-- 서버 키: `uri`(필수), `groups`, `user`, `auth_db`, `password_env`, `direct`(`no`면 `--no-direct`와 같음)
-- `[defaults]` 키: `interval`, `mode`, `idle`, `user`, `auth_db`, `password_env`, `default`
+- 서버 키: `uri`(필수), `groups`, `user`, `auth_db`, `password_env`, `expand`, `direct`(`no`면 `--no-direct`와 같음)
+- `[defaults]` 키: `interval`, `mode`, `idle`, `user`, `auth_db`, `password_env`, `default`, `expand`
 - 모르는 키가 있으면 오타로 보고 오류를 냅니다. 인자로 `@prod`처럼 쓰면 그룹을 명시할 수 있습니다.
 
 ### 비밀번호
@@ -121,6 +123,14 @@ user = stage_monitor
 6. 터미널에서 입력 (같은 사용자는 한 번만 묻습니다)
 
 URI에 비밀번호가 들어 있으면 그대로 씁니다.
+
+### 레플리카셋 멤버 펼치기
+
+mongotop은 innotop처럼 *노드 하나*를 봅니다. 레플리카셋 URI를 그대로 주면 프라이머리만 보게 되는데,
+`expand = members` 또는 `--expand`를 쓰면 `hello`로 멤버 목록(arbiter 제외)을 받아 **멤버마다 직접 연결**을 만듭니다.
+화면에는 `prod-rs/db2:27017`처럼 표시되고, 세컨더리의 느린 쿼리나 지연도 각각 볼 수 있습니다.
+인증 정보와 URI 옵션(TLS 등)은 그대로 이어받고, `mongodb+srv://`는 `tls=true`와 TXT의 `authSource`를 붙입니다.
+멤버 목록은 시작할 때 한 번 가져옵니다. 시작할 때 멤버를 찾지 못하면 경고를 내고 시드 연결만 씁니다.
 
 ### 필요 권한
 
@@ -174,7 +184,7 @@ docker exec mongo-test mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,ho
 mongotop/
   cli.py        CLI(argparse), 접속 오류 안내, batch 모드
   config.py     설정 파일(~/.mongotop.ini), 서버·그룹 이름 해석, 비밀번호 찾기
-  collector.py  MongoDB 접속·수집(서버 커맨드), kill, 백그라운드 수집 스레드
+  collector.py  MongoDB 접속·수집, 레플리카셋 멤버 펼치기, kill, 백그라운드 수집 스레드
   model.py      모드 정의, $currentOp / replSetGetStatus / top / dbStats 파싱
   metrics.py    serverStatus 게이지와 초당 변화율 계산
   app.py        앱 상태, 서버별 상태/이력, 키 처리 (터미널 I/O 없음)

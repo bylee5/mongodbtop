@@ -97,6 +97,24 @@ def test_kill_session_aborts_idle_transaction(collector):
     client.drop_database("mongotop_test2")
 
 
+def test_expand_members(collector):
+    from mongotop.collector import discover_members, expand_members
+
+    if not discover_members(collector.client):
+        pytest.skip("not a replica set")
+    seed_name, seed = connect(URI, ConnectOpts())
+    members = expand_members("rs", URI, ConnectOpts(), seed)
+    try:
+        assert members and all(label.startswith("rs/") for label, _ in members)
+        for _, client in members:
+            snap = Collector(client).collect(Mode.REPLICATION)
+            assert snap.repl is not None and not snap.repl.error
+            assert any(m.is_self for m in snap.repl.members)
+    finally:
+        for _, client in members:
+            client.close()
+
+
 def test_live_screens(collector):
     app = App([collector.name], Mode.QUERIES, 1.0, False)
     for m in Mode:

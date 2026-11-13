@@ -7,7 +7,7 @@ import queue
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import parse_qs
 
@@ -102,6 +102,62 @@ def connect(uri: str, o: ConnectOpts) -> Tuple[str, MongoClient]:
     except Exception as e:
         raise ValueError(f"invalid MongoDB URI: {mask_uri(uri)}: {e}") from e
     return ",".join(hosts), client
+
+
+_URI_RE = re.compile(r"^(mongodb(?:\+srv)?)://([^@/?]*@)?([^/?]*)(/[^?]*)?(\?.*)?$")
+
+
+def member_uri(uri: str, host: str, extra: Optional[Dict[str, str]] = None) -> str:
+    """`uri`의 인증 정보와 옵션은 그대로 두고 호스트만 `host` 하나로 바꾼다.
+    replicaSet / directConnection은 빼므로 `connect`가 그 노드에 직접 접속한다."""
+    m = _URI_RE.match(uri)
+    if not m:
+        raise ValueError(f"invalid MongoDB URI: {mask_uri(uri)}")
+    _, userinfo, _, path, query = m.groups()
+    params = []
+    for part in (query or "")[1:].split("&"):
+        if part and part.split("=", 1)[0].lower() not in ("replicaset", "directconnection"):
+            params.append(part)
+    given = {p.split("=", 1)[0].lower() for p in params}
+    for k, v in (extra or {}).items():
+        if k.lower() not in given:
+            params.append(f"{k}={v}")
+    q = ("?" + "&".join(params)) if params else ""
+    return f"mongodb://{userinfo or ''}{host}{path or ('/' if q else '')}{q}"
+
+
+def discover_members(client: MongoClient) -> List[str]:
+    """레플리카셋 멤버(데이터를 가진 노드) 목록. 레플리카셋이 아니면 빈 목록.
+    `hello`는 권한 없이도 실행되며 프라이머리를 찾을 필요도 없다."""
+    h = client.admin.command("hello")
+    if not h.get("setName"):
+        return []
+    return list(h.get("hosts", [])) + list(h.get("passives", []))
+
+
+def expand_members(label: str, uri: str, opts: ConnectOpts, seed: MongoClient) -> List[Tuple[str, MongoClient]]:
+    """레플리카셋 URI 하나를 멤버별 직접 연결 목록으로 펼친다.
+    레플리카셋이 아니면 `(label, seed)` 하나를 그대로 돌려준다.
+    탐색 실패는 예외(PyMongoError)로 알린다 — 호출자가 시드만 쓰도록 결정한다."""
+    hosts = discover_members(seed)
+    if not hosts:
+        return [(label, seed)]
+    extra: Dict[str, str] = {}
+    if uri.startswith("mongodb+srv://"):
+        # SRV는 TLS가 기본이고 authSource가 TXT 레코드에 있을 수 있다.
+        extra["tls"] = "true"
+        try:
+            src = uri_parser.parse_uri(uri).get("options", {}).get("authsource")
+        except Exception:
+            src = None
+        if src and not opts.auth_db:
+            extra["authSource"] = str(src)
+    out = []
+    for h in hosts:
+        _, client = connect(member_uri(uri, h, extra), replace(opts, no_direct=False))
+        out.append((f"{label}/{h}", client))
+    seed.close()
+    return out
 
 
 @dataclass

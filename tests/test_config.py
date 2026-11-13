@@ -1,8 +1,9 @@
-"""설정 파일, 접속 대상·비밀번호 결정 테스트."""
+"""설정 파일, 접속 대상·비밀번호 결정, 멤버 URI 테스트."""
 
 import pytest
 
 from mongotop import config
+from mongotop.collector import member_uri
 from mongotop.config import CliAuth, ConfigError, PasswordSource
 from mongotop.model import Mode
 
@@ -16,6 +17,7 @@ default = stage
 [server:prod-rs]
 uri = mongodb://db1:27017,db2:27017/?replicaSet=rs0
 groups = prod
+expand = members
 
 [server:prod-analytics]
 uri = mongodb://db9:27017
@@ -48,6 +50,7 @@ def test_load(cfg):
     assert list(cfg.servers) == ["prod-rs", "prod-analytics", "stage"]
     assert cfg.interval == 5.0
     assert cfg.groups() == {"prod": ["prod-rs", "prod-analytics"], "analytics": ["prod-analytics"]}
+    assert cfg.servers["prod-rs"].expand is True
     assert "prod-analytics" in config.describe(cfg)
     assert "inline" not in config.describe(cfg), "passwords masked in --list"
 
@@ -79,6 +82,7 @@ def test_resolve_names_groups_and_uris(cfg):
     ts = resolve(cfg, groups=["prod"], env=env)
     assert [t.label for t in ts] == ["prod-rs", "prod-analytics"]
     rs, an = ts
+    assert rs.expand and not an.expand
     assert (rs.opts.username, rs.opts.password, rs.opts.auth_db) == ("monitor", "rs-pw", "admin")
     assert an.opts.password == "an-pw", "password_env wins over the generic variable"
 
@@ -118,7 +122,16 @@ def test_prompt_once_per_user(cfg):
 
 
 def test_cli_overrides(cfg):
-    cli = CliAuth(username="root", password="pw", auth_db="other", no_direct=True)
+    cli = CliAuth(username="root", password="pw", auth_db="other", no_direct=True, expand=True)
     (t,) = resolve(cfg, names=["stage"], cli=cli)
     assert (t.opts.username, t.opts.password, t.opts.auth_db) == ("root", "pw", "other")
-    assert t.opts.no_direct
+    assert t.opts.no_direct and t.expand
+
+
+def test_member_uri():
+    u = "mongodb://u:p%40ss@db1:27017,db2:27017/admin?replicaSet=rs0&tls=true&directConnection=false"
+    assert member_uri(u, "db2:27017") == "mongodb://u:p%40ss@db2:27017/admin?tls=true"
+    assert member_uri("mongodb://a:1/?replicaSet=x", "b:2") == "mongodb://b:2/"
+    assert member_uri("mongodb+srv://c.example.net/?retryWrites=true", "n1:27017", {"tls": "true"}) \
+        == "mongodb://n1:27017/?retryWrites=true&tls=true"
+    assert member_uri("mongodb://h?tls=false", "n:1", {"tls": "true"}) == "mongodb://n:1/?tls=false"

@@ -13,7 +13,7 @@ from pymongo.errors import OperationFailure, PyMongoError, ServerSelectionTimeou
 
 from . import __version__, config, views
 from .app import App
-from .collector import CollectError, Collector, connect, short_err
+from .collector import CollectError, Collector, connect, expand_members, short_err
 from .model import Mode
 
 EPILOG = """\
@@ -30,6 +30,7 @@ EXAMPLES:
   mongotop
   mongotop prod-rs                                      (name from the config file)
   mongotop -g prod                                      (every server in group prod)
+  mongotop mongodb://db1:27017/?replicaSet=rs0 --expand (one entry per member)
   mongotop mongodb://db1:27017 mongodb://db2:27017      (press n to switch)
   mongotop -b -m S -c 10 -i 1                           (vmstat-like batch output)
 """
@@ -61,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-g", "--group", action="append", default=[], help="monitor every server in a config group (repeatable)")
     p.add_argument("--config", help="config file (default ~/.mongotop.ini or env MONGOTOP_CONFIG)")
     p.add_argument("--list", action="store_true", help="list servers from the config file and exit")
+    p.add_argument("--expand", action="store_true", help="monitor every replica set member separately")
     p.add_argument("-i", "--interval", type=float, help="refresh interval in seconds (default 2)")
     p.add_argument("-m", "--mode", type=_mode, help="start mode: Q T L C S B R O D (default Q)")
     p.add_argument("-u", "--username", help="user name (overrides the URI / config)")
@@ -104,12 +106,22 @@ def friendly_error(server: str, e: BaseException) -> str:
     return f"cannot run serverStatus on {server}: {short_err(e)}"
 
 
-def open_targets(targets: List[config.Target]) -> List[Tuple[str, MongoClient]]:
-    """접속 대상마다 클라이언트를 만든다."""
+def open_targets(targets: List[config.Target], warn=None) -> List[Tuple[str, MongoClient]]:
+    """접속 대상마다 클라이언트를 만들고, expand 대상은 레플리카셋 멤버로 펼친다.
+    멤버 탐색에 실패하면 경고하고 시드 연결만 쓴다 (나중에 살아나면 화면에서 보인다)."""
+    warn = warn or (lambda m: print(f"warning: {m}", file=sys.stderr))
     out: List[Tuple[str, MongoClient]] = []
     for t in targets:
         hosts, client = connect(t.uri, t.opts)
-        out.append((t.label or hosts, client))
+        label = t.label or hosts
+        if not t.expand:
+            out.append((label, client))
+            continue
+        try:
+            out.extend(expand_members(label, t.uri, t.opts, client))
+        except PyMongoError as e:
+            warn(f"{label}: cannot list replica set members ({short_err(e)}); monitoring the seed only")
+            out.append((label, client))
     # 같은 노드가 여러 대상에 들어 있으면 한 번만 본다.
     seen, unique = set(), []
     for name, c in out:
@@ -169,7 +181,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     idle = args.idle if args.idle is not None else bool(cfg.idle)
 
-    cli = config.CliAuth(args.username, args.password, args.auth_db, args.no_direct)
+    cli = config.CliAuth(args.username, args.password, args.auth_db, args.no_direct, args.expand)
     try:
         targets = config.resolve(args.targets, args.group, cfg, cli)
         opened = open_targets(targets)

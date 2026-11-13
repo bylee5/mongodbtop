@@ -9,6 +9,7 @@
     [server:prod-rs]
     uri = mongodb://db1:27017,db2:27017/?replicaSet=rs0
     groups = prod
+    expand = members          ; 레플리카셋 멤버마다 따로 접속
 
 비밀번호는 설정 파일에서 읽지 않는다. 찾는 순서:
   -p  >  password_env로 지정한 환경변수  >  MONGOTOP_PASSWORD_<NAME>
@@ -30,8 +31,8 @@ from .collector import ConnectOpts, mask_uri
 from .model import Mode
 
 KEYRING_SERVICE = "mongotop"
-_SERVER_KEYS = {"uri", "groups", "user", "auth_db", "password_env", "direct"}
-_DEFAULT_KEYS = {"interval", "mode", "idle", "user", "auth_db", "password_env", "default"}
+_SERVER_KEYS = {"uri", "groups", "user", "auth_db", "password_env", "expand", "direct"}
+_DEFAULT_KEYS = {"interval", "mode", "idle", "user", "auth_db", "password_env", "default", "expand"}
 
 
 class ConfigError(Exception):
@@ -45,7 +46,7 @@ def default_path() -> Path:
 
 def _bool(v: str, where: str) -> bool:
     s = v.strip().lower()
-    if s in ("1", "true", "yes", "on"):
+    if s in ("1", "true", "yes", "on", "members"):
         return True
     if s in ("0", "false", "no", "off", ""):
         return False
@@ -64,6 +65,7 @@ class ServerDef:
     user: Optional[str] = None
     auth_db: Optional[str] = None
     password_env: Optional[str] = None
+    expand: Optional[bool] = None
     direct: bool = True
 
 
@@ -78,6 +80,7 @@ class Config:
     auth_db: Optional[str] = None
     password_env: Optional[str] = None
     default: List[str] = field(default_factory=list)
+    expand: bool = False
 
     def groups(self) -> Dict[str, List[str]]:
         out: Dict[str, List[str]] = {}
@@ -124,6 +127,8 @@ def load(path: Optional[str] = None) -> Config:
                     raise ConfigError(f"{p} [defaults]: unknown mode {items['mode']!r}")
             if "idle" in items:
                 cfg.idle = _bool(items["idle"], f"{p} [defaults] idle")
+            if "expand" in items:
+                cfg.expand = _bool(items["expand"], f"{p} [defaults] expand")
             cfg.user = items.get("user") or None
             cfg.auth_db = items.get("auth_db") or None
             cfg.password_env = items.get("password_env") or None
@@ -146,6 +151,7 @@ def load(path: Optional[str] = None) -> Config:
                 user=items.get("user") or None,
                 auth_db=items.get("auth_db") or None,
                 password_env=items.get("password_env") or None,
+                expand=_bool(items["expand"], f"{where} expand") if "expand" in items else None,
                 direct=_bool(items["direct"], f"{where} direct") if "direct" in items else True,
             )
         else:
@@ -158,12 +164,14 @@ def describe(cfg: Config) -> str:
     if not cfg.servers:
         where = cfg.path or default_path()
         return f"no servers configured ({where} not found or empty)"
-    rows = [("NAME", "GROUPS", "USER", "URI")]
+    rows = [("NAME", "GROUPS", "USER", "EXPAND", "URI")]
     for s in cfg.servers.values():
         user, _ = uri_userinfo(s.uri)
-        rows.append((s.name, ",".join(s.groups), user or s.user or cfg.user or "", mask_uri(s.uri)))
-    widths = [max(len(r[i]) for r in rows) for i in range(3)]
-    lines = ["  ".join(c.ljust(w) for c, w in zip(r[:3], widths)) + "  " + r[3] for r in rows]
+        exp = s.expand if s.expand is not None else cfg.expand
+        rows.append((s.name, ",".join(s.groups), user or s.user or cfg.user or "",
+                     "members" if exp else "", mask_uri(s.uri)))
+    widths = [max(len(r[i]) for r in rows) for i in range(4)]
+    lines = ["  ".join(c.ljust(w) for c, w in zip(r[:4], widths)) + "  " + r[4] for r in rows]
     lines.append(f"\n({cfg.path})")
     return "\n".join(lines)
 
@@ -176,6 +184,7 @@ class Target:
     label: Optional[str]  # 설정의 서버 이름 (URI를 직접 줬으면 None → 호스트 목록을 쓴다)
     uri: str
     opts: ConnectOpts
+    expand: bool = False
 
 
 @dataclass
@@ -184,6 +193,7 @@ class CliAuth:
     password: Optional[str] = None
     auth_db: Optional[str] = None
     no_direct: bool = False
+    expand: bool = False
 
 
 def uri_userinfo(uri: str) -> Tuple[Optional[str], bool]:
@@ -266,7 +276,8 @@ def _target(label: Optional[str], uri: str, sd: Optional[ServerDef], cfg: Config
         auth_db=auth_db,
         no_direct=cli.no_direct or (sd is not None and not sd.direct),
     )
-    return Target(label, uri, opts)
+    expand = cli.expand or (sd.expand if sd and sd.expand is not None else cfg.expand)
+    return Target(label, uri, opts, expand)
 
 
 def resolve(names: List[str], groups: List[str], cfg: Config, cli: CliAuth,
