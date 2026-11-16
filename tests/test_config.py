@@ -55,6 +55,18 @@ def test_load(cfg):
     assert "inline" not in config.describe(cfg), "passwords masked in --list"
 
 
+
+def test_inline_comments_and_example_file(tmp_path):
+    p = tmp_path / "c.ini"
+    p.write_text(
+        "[server:a]\nuri = mongodb://h:1/?replicaSet=rs0   ; 주석\nexpand = members  # 주석\n",
+        encoding="utf-8",
+    )
+    c = config.load(str(p))
+    assert c.servers["a"].uri == "mongodb://h:1/?replicaSet=rs0"
+    assert c.servers["a"].expand is True
+
+
 def test_missing_default_file_is_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("MONGOTOP_CONFIG", raising=False)
     monkeypatch.setattr(config.Path, "home", lambda: tmp_path)

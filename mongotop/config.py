@@ -97,7 +97,8 @@ def load(path: Optional[str] = None) -> Config:
         if path or os.environ.get("MONGOTOP_CONFIG"):
             raise ConfigError(f"config file not found: {p}")
         return Config()
-    cp = configparser.ConfigParser(interpolation=None)  # URI의 %는 그대로
+    # 줄 끝 주석은 앞에 공백이 있는 ; 또는 # 만 (URI 안의 문자는 그대로). URI의 %도 그대로.
+    cp = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=(";", "#"))
     try:
         with open(p, encoding="utf-8") as f:
             cp.read_file(f)
