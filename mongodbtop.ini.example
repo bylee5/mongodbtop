@@ -1,7 +1,7 @@
-; mongotop 서버 목록 예시. ~/.mongotop.ini 로 복사한 뒤 수정하세요.
-;   cp mongotop.ini.example ~/.mongotop.ini && mongotop --list
+; mongodbtop 서버 목록 예시. ~/.mongodbtop.ini 로 복사한 뒤 수정하세요.
+;   cp mongodbtop.ini.example ~/.mongodbtop.ini && mongodbtop --list
 ; 비밀번호는 이 파일에 쓰지 않습니다 (password 키가 있으면 오류).
-; MONGOTOP_PASSWORD_<NAME> 환경변수, password_env, keyring, 또는 실행 시 입력으로 넘깁니다.
+; MONGODBTOP_PASSWORD_<NAME> 환경변수, password_env, keyring, 또는 실행 시 입력으로 넘깁니다.
 
 [defaults]
 interval = 2

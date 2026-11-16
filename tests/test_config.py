@@ -2,10 +2,10 @@
 
 import pytest
 
-from mongotop import config
-from mongotop.collector import Settings, member_uri, plan
-from mongotop.config import CliAuth, ConfigError, PasswordSource
-from mongotop.model import Mode
+from mongodbtop import config
+from mongodbtop.collector import Settings, member_uri, plan
+from mongodbtop.config import CliAuth, ConfigError, PasswordSource
+from mongodbtop.model import Mode
 
 INI = """
 [defaults]
@@ -68,11 +68,11 @@ def test_inline_comments_and_example_file(tmp_path):
     # 저장소에 들어 있는 예시 파일이 그대로 읽혀야 한다.
     from pathlib import Path
 
-    ex = config.load(str(Path(__file__).parent.parent / "mongotop.ini.example"))
+    ex = config.load(str(Path(__file__).parent.parent / "mongodbtop.ini.example"))
     assert ex.groups()["prod"] == ["prod-rs", "prod-analytics"]
 
 def test_missing_default_file_is_empty(tmp_path, monkeypatch):
-    monkeypatch.delenv("MONGOTOP_CONFIG", raising=False)
+    monkeypatch.delenv("MONGODBTOP_CONFIG", raising=False)
     monkeypatch.setattr(config.Path, "home", lambda: tmp_path)
     assert config.load().servers == {}
     with pytest.raises(ConfigError):
@@ -94,7 +94,7 @@ def test_bad_config(tmp_path, body):
 
 
 def test_resolve_names_groups_and_uris(cfg):
-    env = {"MONGOTOP_PASSWORD_PROD_RS": "rs-pw", "ANALYTICS_PW": "an-pw"}
+    env = {"MONGODBTOP_PASSWORD_PROD_RS": "rs-pw", "ANALYTICS_PW": "an-pw"}
     ts = resolve(cfg, groups=["prod"], env=env)
     assert [t.label for t in ts] == ["prod-rs", "prod-analytics"]
     rs, an = ts

@@ -4,11 +4,11 @@ import time
 
 from bson import Int64
 
-from mongotop import views
-from mongotop.app import QUIT, SETTINGS, App, Help, Normal, Picker, Prompt, command
-from mongotop.collector import ErrorMsg, Kill, KillTarget, Refresh, Snapshot, SnapshotMsg
-from mongotop.model import Mode, Op
-from mongotop.ui import Buffer, UiState, draw
+from mongodbtop import views
+from mongodbtop.app import QUIT, SETTINGS, App, Help, Normal, Picker, Prompt, command
+from mongodbtop.collector import ErrorMsg, Kill, KillTarget, Refresh, Snapshot, SnapshotMsg
+from mongodbtop.model import Mode, Op
+from mongodbtop.ui import Buffer, UiState, draw
 
 
 def status(up_ms, ins):
@@ -132,7 +132,7 @@ def test_renders_every_mode_and_popups():
         screen(app, 0, 0)
     app.mode = Mode.QUERIES
     app.input = Help()
-    assert "mongotop help" in screen(app, 120, 40)
+    assert "mongodbtop help" in screen(app, 120, 40)
     app.input = Normal()
     app.handle_key("ENTER")
     assert "opid: 42" in screen(app, 120, 40)

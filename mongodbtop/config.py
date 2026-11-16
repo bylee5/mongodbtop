@@ -1,4 +1,4 @@
-"""서버 목록 설정 파일(~/.mongotop.ini)과 접속 대상·인증 정보 결정.
+"""서버 목록 설정 파일(~/.mongodbtop.ini)과 접속 대상·인증 정보 결정.
 
     [defaults]
     interval = 2
@@ -12,7 +12,7 @@
     expand = members          ; 레플리카셋 멤버마다 따로 접속
 
 비밀번호는 설정 파일에서 읽지 않는다. 찾는 순서:
-  -p  >  password_env로 지정한 환경변수  >  MONGOTOP_PASSWORD_<NAME>
+  -p  >  password_env로 지정한 환경변수  >  MONGODBTOP_PASSWORD_<NAME>
       >  MONGODB_PASSWORD  >  OS 키체인(keyring, 선택)  >  터미널에서 입력
 """
 
@@ -30,7 +30,7 @@ from urllib.parse import unquote
 from .collector import ConnectOpts, mask_uri
 from .model import Mode
 
-KEYRING_SERVICE = "mongotop"
+KEYRING_SERVICE = "mongodbtop"
 _SERVER_KEYS = {"uri", "groups", "user", "auth_db", "password_env", "expand", "direct"}
 _DEFAULT_KEYS = {"interval", "mode", "idle", "user", "auth_db", "password_env", "default", "expand"}
 
@@ -40,8 +40,8 @@ class ConfigError(Exception):
 
 
 def default_path() -> Path:
-    env = os.environ.get("MONGOTOP_CONFIG")
-    return Path(env).expanduser() if env else Path.home() / ".mongotop.ini"
+    env = os.environ.get("MONGODBTOP_CONFIG")
+    return Path(env).expanduser() if env else Path.home() / ".mongodbtop.ini"
 
 
 def _bool(v: str, where: str) -> bool:
@@ -94,7 +94,7 @@ def load(path: Optional[str] = None) -> Config:
     """설정 파일을 읽는다. 경로를 명시하지 않았고 기본 파일이 없으면 빈 설정."""
     p = Path(path).expanduser() if path else default_path()
     if not p.exists():
-        if path or os.environ.get("MONGOTOP_CONFIG"):
+        if path or os.environ.get("MONGODBTOP_CONFIG"):
             raise ConfigError(f"config file not found: {p}")
         return Config()
     # 줄 끝 주석은 앞에 공백이 있는 ; 또는 # 만 (URI 안의 문자는 그대로). URI의 %도 그대로.
@@ -111,7 +111,7 @@ def load(path: Optional[str] = None) -> Config:
         if "password" in items:
             raise ConfigError(
                 f"{p} [{sec}]: passwords are not read from the config file — use password_env, "
-                "MONGOTOP_PASSWORD_<NAME>, MONGODB_PASSWORD, keyring or the prompt"
+                "MONGODBTOP_PASSWORD_<NAME>, MONGODB_PASSWORD, keyring or the prompt"
             )
         if sec == "defaults":
             unknown = set(items) - _DEFAULT_KEYS
@@ -207,7 +207,7 @@ def uri_userinfo(uri: str) -> Tuple[Optional[str], bool]:
 
 
 def env_name(name: str) -> str:
-    return "MONGOTOP_PASSWORD_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
+    return "MONGODBTOP_PASSWORD_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
 
 
 def _keyring(key: str, user: str) -> Optional[str]:

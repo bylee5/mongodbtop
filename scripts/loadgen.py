@@ -1,4 +1,4 @@
-"""테스트 서버에 부하를 걸어 mongotop 화면(Q, T, O, S, C 모드)에 데이터가 보이게 한다.
+"""테스트 서버에 부하를 걸어 mongodbtop 화면(Q, T, O, S, C 모드)에 데이터가 보이게 한다.
 
     python scripts/loadgen.py [URI] [--seconds N]
 
@@ -19,7 +19,7 @@ import time
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
-APP = "mongotop-loadgen"
+APP = "mongodbtop-loadgen"
 
 
 def writer(coll, stop: threading.Event) -> None:
@@ -48,7 +48,7 @@ def slow_query(coll, stop: threading.Event, secs: int) -> None:
         try:
             coll.find_one({"$where": f"sleep({secs * 1000}); return false"})
         except PyMongoError:
-            pass  # mongotop에서 kill하면 여기로 온다
+            pass  # mongodbtop에서 kill하면 여기로 온다
 
 
 def idle_txn(client, coll, stop: threading.Event) -> None:
@@ -61,7 +61,7 @@ def idle_txn(client, coll, stop: threading.Event) -> None:
                 stop.wait(20)
                 s.abort_transaction()
         except PyMongoError:
-            stop.wait(1)  # mongotop에서 세션을 kill하면 여기로 온다
+            stop.wait(1)  # mongodbtop에서 세션을 kill하면 여기로 온다
 
 
 def main() -> None:

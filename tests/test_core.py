@@ -5,9 +5,9 @@ import datetime as dt
 from bson import Int64
 from bson.binary import Binary
 
-from mongotop.metrics import Gauges, rates
-from mongotop.model import Mode, Op, ReplStatus, parse_commands, parse_top, top_rates
-from mongotop.util import (
+from mongodbtop.metrics import Gauges, rates
+from mongodbtop.model import Mode, Op, ReplStatus, parse_commands, parse_top, top_rates
+from mongodbtop.util import (
     boolean,
     compact,
     fmt_bytes,

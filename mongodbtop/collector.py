@@ -18,7 +18,7 @@ from pymongo.errors import OperationFailure, PyMongoError, ServerSelectionTimeou
 from .model import DbStat, Mode, Op, ReplStatus, TopRaw, parse_top
 from .util import compact
 
-APP_NAME = "mongotop"
+APP_NAME = "mongodbtop"
 
 
 class CollectError(Exception):
@@ -387,7 +387,7 @@ class _ServerWorker(threading.Thread):
     연결이 끊기면 드라이버가 다음 수집 때 다시 접속한다."""
 
     def __init__(self, index: int, collector: Collector, pool: "Worker", out: "queue.Queue[Message]"):
-        super().__init__(name=f"mongotop-collector-{index}", daemon=True)
+        super().__init__(name=f"mongodbtop-collector-{index}", daemon=True)
         self.index = index
         self._collector = collector
         self._pool = pool

@@ -1,11 +1,14 @@
-# mongotop
+# mongodbtop
 
 [innotop](https://github.com/innotop/innotop)에서 영감을 받은, **Python으로 작성한 MongoDB용 실시간 모니터링 TUI**입니다.
 innotop처럼 대문자 키 하나로 모드를 전환하고, 실행 중인 작업을 보고, 오래 걸리는 작업을 바로 kill할 수 있습니다.
 TSV를 출력하는 비대화형(batch) 모드도 있습니다.
 
+MongoDB Database Tools에 들어 있는 공식 `mongotop`(컬렉션별 읽기/쓰기 시간 출력)과는 다른 프로그램입니다.
+이름이 겹치지 않게 명령은 `mongodbtop`이고, 같은 서버에 함께 설치해도 공식 도구를 건드리지 않습니다.
+
 ```
- mongotop  [Q] Query List  │ server 1/1: localhost:27017  │ every 1s  │ 13:59:35
+ mongodbtop  [Q] Query List  │ server 1/1: localhost:27017  │ every 1s  │ 13:59:35
 a97b9adcd89f │ mongod 8.0.3 │ PRIMARY rs0 │ up 3m28s │ conns 25 (active 9, avail 203.5k) │ mem 331.0M
 ops/s 615 │ ins 299 qry 262 upd 51.9 del 0 gm 0 cmd 1.4 │ repl 0 │ net in 191.4K/s out 382.1K/s │ new conns 0/s
 latency r 0.33ms w 4.60ms c 1.09ms │ queue r/w 0/0 active r/w 1/0 │ cache 0.9% dirty 0.6% │ txn open 0 active 0 inactive 0
@@ -53,28 +56,28 @@ Opid         Time▼ Op        Namespace                Client                Ap
 | `?` | 도움말, `q` / `Ctrl-C` 종료 |
 
 innotop이 Sleep 스레드를 기본으로 숨기듯, Q 모드는 드라이버의 대기형 `hello`(maxAwaitTimeMS), 클라이언트가 없는 내부 스레드
-(Checkpointer 등), oplog tailing getMore, 그리고 mongotop 자신의 연결을 기본으로 숨깁니다. `i`로 표시할 수 있습니다.
+(Checkpointer 등), oplog tailing getMore, 그리고 mongodbtop 자신의 연결을 기본으로 숨깁니다. `i`로 표시할 수 있습니다.
 
 색상: 빨강 = 락 대기·멤버 다운·실패 발생, 노랑 = 오래 실행(10초+)·복제 지연(10초+)·캐시 압박, 회색 = 비활성.
 
 ## 사용법
 
 ```sh
-mongotop                                           # 설정의 default, 없으면 mongodb://localhost:27017
-mongotop prod-rs                                   # 설정 파일에 등록한 서버 이름
-mongotop -g prod                                   # 그룹 전체 (A 모드로 시작)
-mongotop prod-rs stage mongodb://db7:27017         # 이름과 URI를 섞어서
-mongotop mongodb://db1:27017/?replicaSet=rs0 --expand   # 레플리카셋 멤버마다 따로
-mongotop --list                                    # 등록된 서버 목록
-mongotop mongodb://user:pw@db1:27017 -m R          # 복제 상태부터 시작
-mongotop -u admin -p secret --auth-db admin        # URI 대신 옵션으로 인증
-MONGODB_URI=mongodb+srv://... mongotop             # 환경변수
+mongodbtop                                           # 설정의 default, 없으면 mongodb://localhost:27017
+mongodbtop prod-rs                                   # 설정 파일에 등록한 서버 이름
+mongodbtop -g prod                                   # 그룹 전체 (A 모드로 시작)
+mongodbtop prod-rs stage mongodb://db7:27017         # 이름과 URI를 섞어서
+mongodbtop mongodb://db1:27017/?replicaSet=rs0 --expand   # 레플리카셋 멤버마다 따로
+mongodbtop --list                                    # 등록된 서버 목록
+mongodbtop mongodb://user:pw@db1:27017 -m R          # 복제 상태부터 시작
+mongodbtop -u admin -p secret --auth-db admin        # URI 대신 옵션으로 인증
+MONGODB_URI=mongodb+srv://... mongodbtop             # 환경변수
 
 # 비대화형(batch) 모드: TSV 출력. 스크립트/로그 수집용
-mongotop -b -m S -c 10 -i 1     # vmstat 처럼 1초마다 한 줄, 10회
-mongotop -b -m Q                # 현재 실행 중인 작업 1회 덤프
-mongotop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복
-mongotop -b -m A -g prod -c 0 -i 10   # 그룹 전체를 10초마다 서버당 한 줄 (A 외 모드는 첫 서버만)
+mongodbtop -b -m S -c 10 -i 1     # vmstat 처럼 1초마다 한 줄, 10회
+mongodbtop -b -m Q                # 현재 실행 중인 작업 1회 덤프
+mongodbtop -b -m O -c 0 -i 5      # 5초마다 컬렉션 부하, 무한 반복
+mongodbtop -b -m A -g prod -c 0 -i 10   # 그룹 전체를 10초마다 서버당 한 줄 (A 외 모드는 첫 서버만)
 ```
 
 옵션: `-i/--interval` 초 단위 갱신 주기(기본 2), `-m/--mode` 시작 모드(서버가 여럿이면 기본 A),
@@ -83,9 +86,9 @@ mongotop -b -m A -g prod -c 0 -i 10   # 그룹 전체를 10초마다 서버당 �
 
 ## 여러 서버 관리
 
-### 설정 파일 `~/.mongotop.ini`
+### 설정 파일 `~/.mongodbtop.ini`
 
-경로는 `--config` 또는 환경변수 `MONGOTOP_CONFIG`로 바꿀 수 있습니다. 예시는 [mongotop.ini.example](mongotop.ini.example)에 있습니다. 파일이 없으면 지금처럼 URI로만 동작합니다.
+경로는 `--config` 또는 환경변수 `MONGODBTOP_CONFIG`로 바꿀 수 있습니다. 예시는 [mongodbtop.ini.example](mongodbtop.ini.example)에 있습니다. 파일이 없으면 지금처럼 URI로만 동작합니다.
 
 ```ini
 [defaults]
@@ -120,16 +123,16 @@ user = stage_monitor
 
 1. `-p`
 2. 서버의 `password_env`가 가리키는 환경변수
-3. `MONGOTOP_PASSWORD_<NAME>` — 이름을 대문자로, 영숫자 외 문자는 `_`로 (`prod-rs` → `MONGOTOP_PASSWORD_PROD_RS`)
+3. `MONGODBTOP_PASSWORD_<NAME>` — 이름을 대문자로, 영숫자 외 문자는 `_`로 (`prod-rs` → `MONGODBTOP_PASSWORD_PROD_RS`)
 4. `[defaults] password_env`, 그다음 `MONGODB_PASSWORD`
-5. OS 키체인 — `pip install "mongotop[keyring]"` 후 `keyring set mongotop prod-rs` (서버 이름 대신 사용자 이름으로 저장해도 됨)
+5. OS 키체인 — `pip install "mongodbtop[keyring]"` 후 `keyring set mongodbtop prod-rs` (서버 이름 대신 사용자 이름으로 저장해도 됨)
 6. 터미널에서 입력 (같은 사용자는 한 번만 묻습니다)
 
 URI에 비밀번호가 들어 있으면 그대로 씁니다.
 
 ### 레플리카셋 멤버 펼치기
 
-mongotop은 innotop처럼 *노드 하나*를 봅니다. 레플리카셋 URI를 그대로 주면 프라이머리만 보게 되는데,
+mongodbtop은 innotop처럼 *노드 하나*를 봅니다. 레플리카셋 URI를 그대로 주면 프라이머리만 보게 되는데,
 `expand = members` 또는 `--expand`를 쓰면 `hello`로 멤버 목록(arbiter 제외)을 받아 **멤버마다 직접 연결**을 만듭니다.
 화면에는 `prod-rs/db2:27017`처럼 표시되고, 세컨더리의 느린 쿼리나 지연도 각각 볼 수 있습니다.
 인증 정보와 URI 옵션(TLS 등)은 그대로 이어받고, `mongodb+srv://`는 `tls=true`와 TXT의 `authSource`를 붙입니다.
@@ -164,32 +167,32 @@ Python 3.9 이상과 git이 필요합니다. 의존성은 `pymongo`, 그리고 W
 ```sh
 # Linux / macOS
 git clone git@github.com:bylee5/mongotop.git && cd mongotop
-./install.sh                  # .venv 생성, pip 설치, ~/.local/bin/mongotop 링크
+./install.sh                  # .venv 생성, pip 설치, ~/.local/bin/mongodbtop 링크
 ./install.sh --update         # git pull 후 다시 설치
-./install.sh --uninstall      # 링크와 .venv 제거 (소스와 ~/.mongotop.ini는 남김)
+./install.sh --uninstall      # 링크와 .venv 제거 (소스와 ~/.mongodbtop.ini는 남김)
 ```
 
 ```powershell
 # Windows (실행 정책에 막히면: powershell -ExecutionPolicy Bypass -File .\install.ps1)
 git clone git@github.com:bylee5/mongotop.git; cd mongotop
-.\install.ps1                 # .venv 생성, pip 설치, ~\.local\bin\mongotop.cmd 생성 후 사용자 PATH에 추가
+.\install.ps1                 # .venv 생성, pip 설치, ~\.local\bin\mongodbtop.cmd 생성 후 사용자 PATH에 추가
 .\install.ps1 -Update
 .\install.ps1 -Uninstall
 ```
 
-- 저장소 밖에서 실행하면 `--repo`(기본 `git@github.com:bylee5/mongotop.git`)를 `--dir`(기본 `~/.local/share/mongotop`,
-  Windows는 `%LOCALAPPDATA%\mongotop`)에 clone해서 설치하고, `--uninstall`은 그 디렉터리까지 지웁니다.
+- 저장소 밖에서 실행하면 `--repo`(기본 `git@github.com:bylee5/mongotop.git`)를 `--dir`(기본 `~/.local/share/mongodbtop`,
+  Windows는 `%LOCALAPPDATA%\mongodbtop`)에 clone해서 설치하고, `--uninstall`은 그 디렉터리까지 지웁니다.
 - 옵션: `--branch`, `--bin-dir`, `--python`, `--keyring`(OS 키체인 비밀번호 조회).
   PowerShell은 `-Repo -Branch -Dir -BinDir -Python -Keyring`.
-- 링크 위치에 설치 스크립트가 만들지 않은 같은 이름의 파일이 있으면 덮어쓰지 않고 중단하며, PATH에서 다른 `mongotop`이 먼저 실행되면 경고합니다.
-- 설치 후 서버 목록은 예시 파일을 복사해서 만듭니다: `cp mongotop.ini.example ~/.mongotop.ini`, 확인은 `mongotop --list`.
+- 링크 위치에 설치 스크립트가 만들지 않은 같은 이름의 파일이 있으면 덮어쓰지 않고 중단하며, PATH에서 다른 `mongodbtop`이 먼저 실행되면 경고합니다.
+- 설치 후 서버 목록은 예시 파일을 복사해서 만듭니다: `cp mongodbtop.ini.example ~/.mongodbtop.ini`, 확인은 `mongodbtop --list`.
 
 ### 직접 설치
 
 ```sh
 pip install "git+ssh://git@github.com/bylee5/mongotop.git"   # clone 없이 바로 (업데이트: --upgrade)
 pip install .                 # clone한 소스에서
-python -m mongotop --help     # 설치 없이 실행 (의존성은 별도 설치)
+python -m mongodbtop --help     # 설치 없이 실행 (의존성은 별도 설치)
 
 # 개발용
 python -m venv .venv
@@ -197,7 +200,7 @@ python -m venv .venv
 ```
 
 인터넷이 막힌 서버는 다른 PC에서 `pip wheel . -w dist/`로 wheel을 만들어 옮긴 뒤
-`pip install --no-index --find-links dist/ mongotop`으로 설치합니다(서버와 OS·Python 버전이 같아야 pymongo wheel이 맞습니다).
+`pip install --no-index --find-links dist/ mongodbtop`으로 설치합니다(서버와 OS·Python 버전이 같아야 pymongo wheel이 맞습니다).
 
 - `mongodb+srv://`(Atlas)는 pymongo가 함께 설치하는 `dnspython`으로 바로 동작하며, TLS도 별도 빌드 옵션이 필요 없습니다.
 
@@ -216,7 +219,7 @@ insert/update/find 반복, 몇~수십 초짜리 COLLSCAN 쿼리(`$where sleep`),
 
 ```sh
 pytest                                                      # 단위 + 렌더링 테스트
-MONGOTOP_TEST_URI=mongodb://localhost:27017 pytest -s      # 실서버 테스트 포함
+MONGODBTOP_TEST_URI=mongodb://localhost:27017 pytest -s      # 실서버 테스트 포함
 ```
 
 실서버 테스트(`tests/test_live.py`)는 모든 모드 수집, `killOp`로 슬로우 쿼리 종료, `killSessions`로 idle 트랜잭션 중단을 검증하고,
@@ -230,9 +233,9 @@ docker exec mongo-test mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,ho
 ## 구조
 
 ```
-mongotop/
+mongodbtop/
   cli.py        CLI(argparse), 접속 오류 안내, batch 모드
-  config.py     설정 파일(~/.mongotop.ini), 서버·그룹 이름 해석, 비밀번호 찾기
+  config.py     설정 파일(~/.mongodbtop.ini), 서버·그룹 이름 해석, 비밀번호 찾기
   collector.py  MongoDB 접속·수집, 레플리카셋 멤버 펼치기, kill, 서버별 수집 스레드
   model.py      모드 정의, $currentOp / replSetGetStatus / top / dbStats 파싱
   metrics.py    serverStatus 게이지와 초당 변화율 계산

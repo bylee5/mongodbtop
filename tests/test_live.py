@@ -1,6 +1,6 @@
 """실제 서버를 대상으로 하는 테스트. 실행 방법:
 
-    MONGOTOP_TEST_URI=mongodb://localhost:27017 pytest tests/test_live.py -s
+    MONGODBTOP_TEST_URI=mongodb://localhost:27017 pytest tests/test_live.py -s
 
 환경 변수가 없으면 건너뛴다. `test_live_screens`는 실데이터로 모든 모드 화면을 출력한다.
 """
@@ -11,13 +11,13 @@ import time
 
 import pytest
 
-from mongotop.app import App
-from mongotop.collector import Collector, ConnectOpts, KillTarget, SnapshotMsg, connect
-from mongotop.model import Mode, Op
-from mongotop.ui import Buffer, UiState, draw
+from mongodbtop.app import App
+from mongodbtop.collector import Collector, ConnectOpts, KillTarget, SnapshotMsg, connect
+from mongodbtop.model import Mode, Op
+from mongodbtop.ui import Buffer, UiState, draw
 
-URI = os.environ.get("MONGOTOP_TEST_URI")
-pytestmark = pytest.mark.skipif(not URI, reason="MONGOTOP_TEST_URI not set")
+URI = os.environ.get("MONGODBTOP_TEST_URI")
+pytestmark = pytest.mark.skipif(not URI, reason="MONGODBTOP_TEST_URI not set")
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def test_every_mode_collects(collector):
 
 def test_kill_op_terminates_a_slow_query(collector):
     client = collector.client
-    coll = client.mongotop_test.slow
+    coll = client.mongodbtop_test.slow
     coll.insert_one({"x": 1})
     where = "sleep(60000); return false"
     result = {}
@@ -66,12 +66,12 @@ def test_kill_op_terminates_a_slow_query(collector):
     t.join(10)
     assert not t.is_alive(), "query ended after kill"
     assert "err" in result, "killed query returns an error (Interrupted)"
-    client.drop_database("mongotop_test")
+    client.drop_database("mongodbtop_test")
 
 
 def test_kill_session_aborts_idle_transaction(collector):
     client = collector.client
-    coll = client.mongotop_test2.t
+    coll = client.mongodbtop_test2.t
     coll.insert_one({"seed": 1})
     with client.start_session() as session:
         session.start_transaction()
@@ -94,11 +94,11 @@ def test_kill_session_aborts_idle_transaction(collector):
         with pytest.raises(Exception):
             session.commit_transaction()
     collector.collect(Mode.TRANSACTIONS)
-    client.drop_database("mongotop_test2")
+    client.drop_database("mongodbtop_test2")
 
 
 def test_expand_members(collector):
-    from mongotop.collector import discover_members, expand_members
+    from mongodbtop.collector import discover_members, expand_members
 
     if not discover_members(collector.client):
         pytest.skip("not a replica set")

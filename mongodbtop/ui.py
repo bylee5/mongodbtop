@@ -193,7 +193,7 @@ def _draw_title(app: App, buf: Buffer) -> None:
     bar = Style(bg="darkgray")
     buf.fill(0, 0, buf.w, bar)
     spans = [
-        (" mongotop ", Style(fg="black", bg="green", bold=True)),
+        (" mongodbtop ", Style(fg="black", bg="green", bold=True)),
         (" ", PLAIN),
         (f"[{app.mode.key}] {app.mode.title}", Style(bold=True)),
         (
@@ -331,7 +331,7 @@ def _box(buf: Buffer, x: int, y: int, w: int, h: int, title: str) -> None:
 
 def _draw_help(buf: Buffer) -> None:
     x, y, w, h = _centered(buf, 70, 80)
-    _box(buf, x, y, w, h, " mongotop help — press any key ")
+    _box(buf, x, y, w, h, " mongodbtop help — press any key ")
     for i, (k, v) in enumerate(HELP[: max(0, h - 2)]):
         yy, lim = y + 1 + i, x + w - 1
         if not k:

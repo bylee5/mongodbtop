@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mongotop"
+name = "mongodbtop"
 version = "0.1.0"
 description = "innotop-style real-time TUI monitor for MongoDB"
 readme = "README.md"
@@ -19,10 +19,10 @@ test = ["pytest>=7"]
 keyring = ["keyring>=23"]
 
 [project.scripts]
-mongotop = "mongotop.cli:main"
+mongodbtop = "mongodbtop.cli:main"
 
 [tool.setuptools]
-packages = ["mongotop"]
+packages = ["mongodbtop"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

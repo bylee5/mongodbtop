@@ -1,4 +1,4 @@
-"""mongotop — innotop 스타일의 MongoDB 실시간 모니터. CLI 진입점과 batch 모드."""
+"""mongodbtop — innotop 스타일의 MongoDB 실시간 모니터. CLI 진입점과 batch 모드."""
 
 from __future__ import annotations
 
@@ -23,19 +23,19 @@ MODES: Q queries, T transactions, L lock waits, C commands, S status over time,
        A all servers (one summary row per server)
 
 SERVERS: a target is a URI, or a server / group name from the config file
-  (~/.mongotop.ini, or --config / MONGOTOP_CONFIG). See --list.
+  (~/.mongodbtop.ini, or --config / MONGODBTOP_CONFIG). See --list.
 
 PASSWORDS are never read from the config file. Lookup order:
-  -p, password_env, MONGOTOP_PASSWORD_<NAME>, MONGODB_PASSWORD, keyring, prompt
+  -p, password_env, MONGODBTOP_PASSWORD_<NAME>, MONGODB_PASSWORD, keyring, prompt
 
 EXAMPLES:
-  mongotop
-  mongotop prod-rs                                      (name from the config file)
-  mongotop -g prod                                      (every server in group prod)
-  mongotop mongodb://db1:27017/?replicaSet=rs0 --expand (one entry per member)
-  mongotop mongodb://db1:27017 mongodb://db2:27017      (press n / w to switch)
-  mongotop -b -m S -c 10 -i 1                           (vmstat-like batch output)
-  mongotop -b -m A -g prod -c 0 -i 10                   (all servers, every 10s)
+  mongodbtop
+  mongodbtop prod-rs                                      (name from the config file)
+  mongodbtop -g prod                                      (every server in group prod)
+  mongodbtop mongodb://db1:27017/?replicaSet=rs0 --expand (one entry per member)
+  mongodbtop mongodb://db1:27017 mongodb://db2:27017      (press n / w to switch)
+  mongodbtop -b -m S -c 10 -i 1                           (vmstat-like batch output)
+  mongodbtop -b -m A -g prod -c 0 -i 10                   (all servers, every 10s)
 """
 
 
@@ -50,7 +50,7 @@ def _mode(s: str) -> Mode:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="mongotop",
+        prog="mongodbtop",
         description="innotop-style real-time monitor for MongoDB",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "[default: config 'default', env MONGODB_URI, or mongodb://localhost:27017]",
     )
     p.add_argument("-g", "--group", action="append", default=[], help="monitor every server in a config group (repeatable)")
-    p.add_argument("--config", help="config file (default ~/.mongotop.ini or env MONGOTOP_CONFIG)")
+    p.add_argument("--config", help="config file (default ~/.mongodbtop.ini or env MONGODBTOP_CONFIG)")
     p.add_argument("--list", action="store_true", help="list servers from the config file and exit")
     p.add_argument("--expand", action="store_true", help="monitor every replica set member separately")
     p.add_argument("-i", "--interval", type=float, help="refresh interval in seconds (default 2)")
@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-direct", action="store_true", help="do not force a direct connection for single-host URIs")
     p.add_argument("-b", "--batch", action="store_true", help="non-interactive mode: tab-separated output instead of the TUI")
     p.add_argument("-c", "--count", type=int, default=1, help="batch iterations (0 = forever, default 1)")
-    p.add_argument("-V", "--version", action="version", version=f"mongotop {__version__}")
+    p.add_argument("-V", "--version", action="version", version=f"mongodbtop {__version__}")
     return p
 
 
@@ -83,9 +83,9 @@ def friendly_error(server: str, e: BaseException) -> str:
     """흔한 접속 실패를 짧고 조치 가능한 메시지로 바꾼다."""
     hint_auth = (
         "pass credentials, e.g.\n"
-        '  mongotop "mongodb://USER:PASSWORD@HOST:27017/?authSource=admin"\n'
-        "  mongotop mongodb://HOST:27017 -u USER -p PASSWORD --auth-db admin\n"
-        "  or set user / password_env for the server in ~/.mongotop.ini"
+        '  mongodbtop "mongodb://USER:PASSWORD@HOST:27017/?authSource=admin"\n'
+        "  mongodbtop mongodb://HOST:27017 -u USER -p PASSWORD --auth-db admin\n"
+        "  or set user / password_env for the server in ~/.mongodbtop.ini"
     )
     if isinstance(e, OperationFailure):
         msg = (e.details or {}).get("errmsg") or str(e)
@@ -275,7 +275,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
-    except BrokenPipeError:  # 예: mongotop -b ... | head
+    except BrokenPipeError:  # 예: mongodbtop -b ... | head
         return 0
     finally:
         for c in collectors:
