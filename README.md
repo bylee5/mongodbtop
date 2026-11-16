@@ -85,7 +85,7 @@ mongotop -b -m A -g prod -c 0 -i 10   # 그룹 전체를 10초마다 서버당 �
 
 ### 설정 파일 `~/.mongotop.ini`
 
-경로는 `--config` 또는 환경변수 `MONGOTOP_CONFIG`로 바꿀 수 있습니다. 파일이 없으면 지금처럼 URI로만 동작합니다.
+경로는 `--config` 또는 환경변수 `MONGOTOP_CONFIG`로 바꿀 수 있습니다. 예시는 [mongotop.ini.example](mongotop.ini.example)에 있습니다. 파일이 없으면 지금처럼 URI로만 동작합니다.
 
 ```ini
 [defaults]
@@ -154,16 +154,50 @@ kill 기능에는 `killop` / `killAnySession` 권한(예: `clusterManager` 또�
 
 ## 설치
 
-Python 3.9 이상이 필요합니다. 의존성은 `pymongo`, 그리고 Windows에서만 `windows-curses`입니다.
+Python 3.9 이상과 git이 필요합니다. 의존성은 `pymongo`, 그리고 Windows에서만 `windows-curses`입니다.
+
+### 설치 스크립트 (권장)
+
+저장소가 private이라 먼저 GitHub 인증이 필요합니다. 서버에는 저장소의 **Settings → Deploy keys**에
+읽기 전용 SSH 키를 등록하는 방법이 가장 간단합니다(`ssh -T git@github.com`으로 확인). `gh auth login` 후 HTTPS로 받아도 됩니다.
 
 ```sh
-pip install .                 # mongotop 명령 설치
+# Linux / macOS
+git clone git@github.com:bylee5/mongotop.git && cd mongotop
+./install.sh                  # .venv 생성, pip 설치, ~/.local/bin/mongotop 링크
+./install.sh --update         # git pull 후 다시 설치
+./install.sh --uninstall      # 링크와 .venv 제거 (소스와 ~/.mongotop.ini는 남김)
+```
+
+```powershell
+# Windows (실행 정책에 막히면: powershell -ExecutionPolicy Bypass -File .\install.ps1)
+git clone git@github.com:bylee5/mongotop.git; cd mongotop
+.\install.ps1                 # .venv 생성, pip 설치, ~\.local\bin\mongotop.cmd 생성 후 사용자 PATH에 추가
+.\install.ps1 -Update
+.\install.ps1 -Uninstall
+```
+
+- 저장소 밖에서 실행하면 `--repo`(기본 `git@github.com:bylee5/mongotop.git`)를 `--dir`(기본 `~/.local/share/mongotop`,
+  Windows는 `%LOCALAPPDATA%\mongotop`)에 clone해서 설치하고, `--uninstall`은 그 디렉터리까지 지웁니다.
+- 옵션: `--branch`, `--bin-dir`, `--python`, `--keyring`(OS 키체인 비밀번호 조회).
+  PowerShell은 `-Repo -Branch -Dir -BinDir -Python -Keyring`.
+- 링크 위치에 설치 스크립트가 만들지 않은 같은 이름의 파일이 있으면 덮어쓰지 않고 중단하며, PATH에서 다른 `mongotop`이 먼저 실행되면 경고합니다.
+- 설치 후 서버 목록은 예시 파일을 복사해서 만듭니다: `cp mongotop.ini.example ~/.mongotop.ini`, 확인은 `mongotop --list`.
+
+### 직접 설치
+
+```sh
+pip install "git+ssh://git@github.com/bylee5/mongotop.git"   # clone 없이 바로 (업데이트: --upgrade)
+pip install .                 # clone한 소스에서
 python -m mongotop --help     # 설치 없이 실행 (의존성은 별도 설치)
 
 # 개발용
 python -m venv .venv
 .venv/bin/pip install -e ".[test]"        # Windows: .venv\Scripts\pip ...
 ```
+
+인터넷이 막힌 서버는 다른 PC에서 `pip wheel . -w dist/`로 wheel을 만들어 옮긴 뒤
+`pip install --no-index --find-links dist/ mongotop`으로 설치합니다(서버와 OS·Python 버전이 같아야 pymongo wheel이 맞습니다).
 
 - `mongodb+srv://`(Atlas)는 pymongo가 함께 설치하는 `dnspython`으로 바로 동작하며, TLS도 별도 빌드 옵션이 필요 없습니다.
 

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "mongotop"
 version = "0.1.0"
 description = "innotop-style real-time TUI monitor for MongoDB"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.9"
 dependencies = [
     "pymongo>=4.6",

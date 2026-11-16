@@ -65,7 +65,11 @@ def test_inline_comments_and_example_file(tmp_path):
     c = config.load(str(p))
     assert c.servers["a"].uri == "mongodb://h:1/?replicaSet=rs0"
     assert c.servers["a"].expand is True
+    # 저장소에 들어 있는 예시 파일이 그대로 읽혀야 한다.
+    from pathlib import Path
 
+    ex = config.load(str(Path(__file__).parent.parent / "mongotop.ini.example"))
+    assert ex.groups()["prod"] == ["prod-rs", "prod-analytics"]
 
 def test_missing_default_file_is_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("MONGOTOP_CONFIG", raising=False)
