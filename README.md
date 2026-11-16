@@ -161,12 +161,9 @@ Python 3.9 이상과 git이 필요합니다. 의존성은 `pymongo`, 그리고 W
 
 ### 설치 스크립트 (권장)
 
-저장소가 private이라 먼저 GitHub 인증이 필요합니다. 서버에는 저장소의 **Settings → Deploy keys**에
-읽기 전용 SSH 키를 등록하는 방법이 가장 간단합니다(`ssh -T git@github.com`으로 확인). `gh auth login` 후 HTTPS로 받아도 됩니다.
-
 ```sh
 # Linux / macOS
-git clone git@github.com:bylee5/mongotop.git && cd mongotop
+git clone https://github.com/bylee5/mongodbtop.git && cd mongodbtop
 ./install.sh                  # .venv 생성, pip 설치, ~/.local/bin/mongodbtop 링크
 ./install.sh --update         # git pull 후 다시 설치
 ./install.sh --uninstall      # 링크와 .venv 제거 (소스와 ~/.mongodbtop.ini는 남김)
@@ -174,13 +171,13 @@ git clone git@github.com:bylee5/mongotop.git && cd mongotop
 
 ```powershell
 # Windows (실행 정책에 막히면: powershell -ExecutionPolicy Bypass -File .\install.ps1)
-git clone git@github.com:bylee5/mongotop.git; cd mongotop
+git clone https://github.com/bylee5/mongodbtop.git; cd mongodbtop
 .\install.ps1                 # .venv 생성, pip 설치, ~\.local\bin\mongodbtop.cmd 생성 후 사용자 PATH에 추가
 .\install.ps1 -Update
 .\install.ps1 -Uninstall
 ```
 
-- 저장소 밖에서 실행하면 `--repo`(기본 `git@github.com:bylee5/mongotop.git`)를 `--dir`(기본 `~/.local/share/mongodbtop`,
+- 저장소 밖에서 실행하면 `--repo`(기본 `https://github.com/bylee5/mongodbtop.git`)를 `--dir`(기본 `~/.local/share/mongodbtop`,
   Windows는 `%LOCALAPPDATA%\mongodbtop`)에 clone해서 설치하고, `--uninstall`은 그 디렉터리까지 지웁니다.
 - 옵션: `--branch`, `--bin-dir`, `--python`, `--keyring`(OS 키체인 비밀번호 조회).
   PowerShell은 `-Repo -Branch -Dir -BinDir -Python -Keyring`.
@@ -190,7 +187,7 @@ git clone git@github.com:bylee5/mongotop.git; cd mongotop
 ### 직접 설치
 
 ```sh
-pip install "git+ssh://git@github.com/bylee5/mongotop.git"   # clone 없이 바로 (업데이트: --upgrade)
+pip install "git+https://github.com/bylee5/mongodbtop.git"   # clone 없이 바로 (업데이트: --upgrade)
 pip install .                 # clone한 소스에서
 python -m mongodbtop --help     # 설치 없이 실행 (의존성은 별도 설치)
 

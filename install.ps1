@@ -15,7 +15,7 @@
 param(
     [switch]$Update,
     [switch]$Uninstall,
-    [string]$Repo = $(if ($env:MONGODBTOP_REPO) { $env:MONGODBTOP_REPO } else { "git@github.com:bylee5/mongotop.git" }),
+    [string]$Repo = $(if ($env:MONGODBTOP_REPO) { $env:MONGODBTOP_REPO } else { "https://github.com/bylee5/mongodbtop.git" }),
     [string]$Branch = "main",
     [string]$Dir = $(if ($env:MONGODBTOP_HOME) { $env:MONGODBTOP_HOME } else { Join-Path $env:LOCALAPPDATA "mongodbtop" }),
     [string]$BinDir = (Join-Path $HOME ".local\bin"),
@@ -93,7 +93,7 @@ function Get-Source {
     } else {
         Say "cloning $Repo ($Branch) into $src"
         Invoke-Native git @("clone", "--quiet", "--branch", $Branch, $Repo, $src) `
-            "git clone failed. The repository is private: register an SSH key (ssh -T git@github.com to check), or run 'gh auth login' and use -Repo https://github.com/bylee5/mongotop.git"
+            "git clone failed. Check network access to github.com (proxy / firewall) and the -Repo URL."
     }
 }
 

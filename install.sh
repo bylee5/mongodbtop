@@ -9,7 +9,7 @@
 # 설치 결과: <dir>/.venv 에 가상환경, <bin-dir>/mongodbtop 에 실행 링크.
 set -euo pipefail
 
-REPO="${MONGODBTOP_REPO:-git@github.com:bylee5/mongotop.git}"
+REPO="${MONGODBTOP_REPO:-https://github.com/bylee5/mongodbtop.git}"
 BRANCH="main"
 DIR="${MONGODBTOP_HOME:-$HOME/.local/share/mongodbtop}"
 BIN_DIR="$HOME/.local/bin"
@@ -23,8 +23,7 @@ usage: $0 [--update | --uninstall] [options]
 
 options:
   --repo URL       clone할 저장소 (기본 $REPO, 환경변수 MONGODBTOP_REPO)
-                   private 저장소라 SSH 키(deploy key) 또는 gh auth login이 필요합니다.
-                   HTTPS 예: https://github.com/bylee5/mongotop.git
+                   SSH 예: git@github.com:bylee5/mongodbtop.git
   --branch NAME    브랜치 또는 태그 (기본 $BRANCH)
   --dir DIR        저장소 밖에서 실행할 때 소스를 둘 위치 (기본 $DIR, 환경변수 MONGODBTOP_HOME)
   --bin-dir DIR    mongodbtop 링크를 만들 위치 (기본 $BIN_DIR)
@@ -123,9 +122,7 @@ fetch_source() {
         say "cloning $REPO ($BRANCH) into $SRC"
         mkdir -p "$(dirname "$SRC")"
         git clone --quiet --branch "$BRANCH" "$REPO" "$SRC" || die "git clone failed.
-  The repository is private: register an SSH deploy key (ssh -T git@github.com to check),
-  run 'gh auth login' and use --repo https://github.com/bylee5/mongotop.git,
-  or use a personal access token as the HTTPS password."
+  Check network access to github.com (proxy / firewall) and the --repo URL."
     fi
 }
 
