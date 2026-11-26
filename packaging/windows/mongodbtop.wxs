@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  mongodbtop Windows 설치 파일 (WiX 5). 직접 빌드하지 말고 packaging\windows\build.ps1 을 쓰세요.
+  build.ps1 이 넘기는 변수: Version, AppDir (PyInstaller 결과 폴더), LicenseRtf
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="mongodbtop"
+           Manufacturer="bylee5"
+           Version="$(var.Version)"
+           UpgradeCode="D0F7C949-16C8-4534-B742-AF680E436809"
+           Scope="perMachine"
+           Language="1033">
+    <SummaryInformation Description="mongodbtop $(var.Version) - innotop-style real-time monitor for MongoDB" />
+
+    <!-- 새 버전을 설치하면 이전 버전을 자동으로 제거한다 -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/bylee5/mongodbtop" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/bylee5/mongodbtop" />
+    <Property Id="ARPCOMMENTS" Value="Run 'mongodbtop' in a new terminal. Unrelated to MongoDB's mongotop." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="mongodbtop" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="mongodbtop" Level="1">
+      <!-- PyInstaller 결과 전체 (mongodbtop.exe, _internal\, 문서) -->
+      <Files Directory="INSTALLFOLDER" Include="$(var.AppDir)\**" />
+
+      <!-- 설치 폴더를 시스템 PATH 끝에 추가 (제거할 때 함께 뺀다) -->
+      <Component Id="AddToPath" Directory="INSTALLFOLDER" Guid="6E0B4F8C-2F0B-4C55-9C1E-3E7B0E5D2A11">
+        <RegistryValue Root="HKLM" Key="Software\bylee5\mongodbtop" Name="InstallDir"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <Environment Id="PathEntry" Name="PATH" Value="[INSTALLFOLDER]"
+                     Action="set" Part="last" System="yes" Permanent="no" />
+      </Component>
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+  </Package>
+</Wix>

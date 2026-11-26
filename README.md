@@ -184,6 +184,33 @@ git clone https://github.com/bylee5/mongodbtop.git; cd mongodbtop
 - 링크 위치에 설치 스크립트가 만들지 않은 같은 이름의 파일이 있으면 덮어쓰지 않고 중단하며, PATH에서 다른 `mongodbtop`이 먼저 실행되면 경고합니다.
 - 설치 후 서버 목록은 예시 파일을 복사해서 만듭니다: `cp mongodbtop.ini.example ~/.mongodbtop.ini`, 확인은 `mongodbtop --list`.
 
+### 설치 파일 (RPM / MSI)
+
+Python이나 pip 없이 설치할 수 있는 패키지입니다. pymongo 등 의존성이 모두 들어 있습니다.
+
+```sh
+# Amazon Linux 2023 (x86_64). 시스템 python3(3.9)을 사용
+sudo dnf install ./mongodbtop-0.1.0-1.amzn2023.x86_64.rpm
+mongodbtop --version
+sudo dnf remove mongodbtop
+```
+
+- `/usr/bin/mongodbtop`, 라이브러리는 `/usr/lib64/mongodbtop`, 설정 예시는 `/usr/share/doc/mongodbtop/mongodbtop.ini.example`.
+- Windows: `mongodbtop-0.1.0-x64.msi`를 실행하면 `C:\Program Files\mongodbtop`에 설치되고 시스템 PATH에 추가됩니다
+  (새 터미널에서 `mongodbtop`). Python 런타임이 포함되어 있어 Python이 없어도 됩니다.
+  조용히 설치: `msiexec /i mongodbtop-0.1.0-x64.msi /qn`, 제거는 "앱 및 기능" 또는 `msiexec /x ...`.
+  코드 서명이 없어 처음 실행할 때 SmartScreen 경고가 나올 수 있습니다.
+
+설치 파일 만들기 (결과는 `dist/`):
+
+```sh
+packaging/rpm/build.sh               # RPM: Docker의 amazonlinux:2023 컨테이너에서 x86_64 빌드
+```
+
+```powershell
+packaging\windows\build.ps1         # MSI: PyInstaller로 실행 파일을 만들고 WiX 5로 묶음 (Python 3.9+, .NET 6+ 런타임 필요)
+```
+
 ### 직접 설치
 
 ```sh
@@ -241,6 +268,8 @@ mongodbtop/
   ui.py         화면 버퍼 렌더링과 curses 출력·이벤트 루프
   util.py       BSON 값 추출, 숫자/바이트/시간 포맷
 tests/          pytest 테스트
+packaging/      설치 파일 빌드: rpm/ (AL2023 RPM), windows/ (PyInstaller + WiX MSI)
+install.sh, install.ps1  소스에서 설치 / 업데이트 / 제거
 ```
 
 수집은 서버마다 별도 스레드에서 돌고 UI는 큐로 스냅샷을 받으므로, 느린 서버에서도 키 입력이 막히지 않습니다.
